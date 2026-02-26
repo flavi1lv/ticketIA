@@ -1,58 +1,68 @@
 const { chromium } = require('playwright');
 
 (async () => {
-  // 1. On lance le navigateur en mode "visible" (headless: false) 
-  // pour que vous voyiez le robot travailler en direct à l'écran !
-  const browser = await chromium.launch({ headless: false });
-  
-  // Astuce de sioux : on se fait passer pour un vrai utilisateur Windows/Chrome
-  const context = await browser.newContext({
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+  console.log("⚡ Mode Turbo activé (Sans fenêtre)...");
+
+  const browser = await chromium.launch({ 
+    headless: true, // ON ENLÈVE LA VISION ICI
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] 
   });
-  
+
+  const context = await browser.newContext({
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+  });
+
   const page = await context.newPage();
 
-  try {
-    console.log("🚀 Étape 1 : Ouverture du site Carrefour...");
-    await page.goto('https://www.carrefour.fr/', { waitUntil: 'domcontentloaded' });
+  // MEGA OPTIMISATION : On bloque tout ce qui est lourd
+  await page.route('**/*', (route) => {
+    const type = route.request().resourceType();
+    if (['image', 'media', 'font', 'stylesheet'].includes(type)) {
+      // On bloque même les feuilles de style (CSS) pour n'avoir que le texte pur
+      route.abort();
+    } else {
+      route.continue();
+    }
+  });
 
-    console.log("🍪 Étape 2 : Gestion de la bannière de cookies...");
-    try {
-      // On attend maximum 3 secondes pour voir si le bouton "Accepter" apparaît
-      await page.waitForSelector('#onetrust-accept-btn-handler', { timeout: 3000 });
-      await page.click('#onetrust-accept-btn-handler');
-    } catch (e) {
-      console.log("  -> Pas de bannière détectée ou déjà acceptée.");
+  try {
+    console.log("🚀 Accès direct aux résultats (sans images)...");
+    
+    // On va directement sur la page de recherche
+    await page.goto('https://www.carrefour.fr/s?q=Nutella+825g', { 
+        waitUntil: 'domcontentloaded', 
+        timeout: 60000 
+    });
+
+    console.log("⏳ Lecture du code source...");
+
+    // On attend que l'élément soit présent dans le HTML (même s'il n'est pas "beau")
+    const selector = 'article, [data-testid="product-card"]';
+    await page.waitForSelector(selector, { state: 'attached', timeout: 30000 });
+
+    // Extraction chirurgicale
+    const produit = await page.evaluate(() => {
+      const first = document.querySelector('article, [data-testid="product-card"]');
+      if (!first) return null;
+
+      // On cherche les textes à l'intérieur
+      return {
+        titre: first.innerText.split('\n')[0], // On prend souvent la 1ère ligne
+        contenu: first.innerText.replace(/\s+/g, ' ') // On nettoie les espaces
+      };
+    });
+
+    if (produit) {
+      console.log("\n✅ DONNÉES RÉCUPÉRÉES :");
+      console.log(`📝 Brut : ${produit.contenu.substring(0, 150)}...`);
+    } else {
+      console.log("❌ Rien trouvé dans le code.");
     }
 
-    console.log("🔍 Étape 3 : Recherche du mot 'Nutella'...");
-    // On cible la barre de recherche (souvent un input avec le nom 'q')
-    await page.fill('input[name="q"]', 'Nutella');
-    await page.press('input[name="q"]', 'Enter');
-
-    console.log("⏳ Attente du chargement des produits...");
-    // On attend que les "cartes" de produits apparaissent sur la page
-    await page.waitForSelector('article', { timeout: 10000 });
-
-    console.log("🎯 Étape 4 : Extraction du premier résultat...");
-    const premierProduit = page.locator('article').first();
-    
-    // ATTENTION : Les classes CSS changent souvent sur ces sites. 
-    // Il faudra inspecter le site de Carrefour (F12) si ces sélecteurs ne marchent plus.
-    const titre = await premierProduit.locator('h2, .product-card-title').first().innerText();
-    const prix = await premierProduit.locator('.product-price__amount-value, .price').first().innerText();
-
-    console.log("\n✅ BINGO ! Voici ce qu'on a trouvé :");
-    console.log(`   🛒 Produit : ${titre.trim()}`);
-    console.log(`   💶 Prix    : ${prix.trim()} €\n`);
-
   } catch (error) {
-    console.error("\n❌ Aïe, le robot a trébuché. Voici l'erreur :");
-    console.error(error.message);
-    console.log("C'est peut-être l'anti-bot (Datadome) qui nous a bloqués, ou le design du site a changé !");
+    console.error("\n❌ Erreur de chargement :", error.message);
   } finally {
-    // On laisse la fenêtre ouverte 5 secondes pour que vous ayez le temps d'admirer (ou de pleurer)
-    await page.waitForTimeout(5000);
     await browser.close();
+    console.log("🏁 Navigateur fermé.");
   }
 })();
