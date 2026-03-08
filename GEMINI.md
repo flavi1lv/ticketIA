@@ -1,0 +1,1 @@
+On souhaite faire un projet qui au final peux scanner un ticket de caisse; comprendre quels sont les produits; comparé les prix sur differents magasins (carrefour, lidl...) et propose le prix qu'on aurait payé si on avait été chez carrefour a la place d'intermarché par exemple.
