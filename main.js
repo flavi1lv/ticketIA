@@ -1,204 +1,86 @@
 const { chromium } = require('playwright');
+const path = require('path');
 const fs = require('fs');
 
-const validateTitle = (title, query) => {
-  const queryKeyword = query.split(' ')[0].toLowerCase();
-  return title.toLowerCase().includes(queryKeyword);
-};
+// ── Chargement dynamique des scrapers ─────────────────────────────────────────
+const scrapersDir = path.join(__dirname, 'scrapers');
+const scrapers = {};
+for (const file of fs.readdirSync(scrapersDir).filter((f) => f.endsWith('.js'))) {
+  scrapers[file.replace('.js', '')] = require(path.join(scrapersDir, file));
+}
 
-const scrapeCarrefour = async (browser, productName) => {
-  const context = await browser.newContext({
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-  });
-  const page = await context.newPage();
-  await page.route('**/*', (route) => {
-    const type = route.request().resourceType();
-    if (['image', 'media', 'font', 'stylesheet'].includes(type)) {
-      route.abort();
-    } else {
-      route.continue();
-    }
-  });
+const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
-  try {
-    console.log(`🚀 [Carrefour] Recherche de "${productName}"...`);
-    await page.goto(`https://www.carrefour.fr/s?q=${encodeURIComponent(productName)}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    console.log("⏳ [Carrefour] Lecture du code source...");
-    const selector = 'article, [data-testid="product-card"]';
-    await page.waitForSelector(selector, { state: 'attached', timeout: 30000 });
+// ── Produits à comparer ───────────────────────────────────────────────────────
+const PRODUCTS = [
+  { label: 'Nutella 1kg', query: 'Nutella 1kg' },
+];
 
-    const productsData = await page.evaluate((sel) => {
-      const elements = Array.from(document.querySelectorAll(sel))
-        .filter(el => !el.innerText.includes('Vendu et livré par'))
-        .slice(0, 5); // Get top 5 non-marketplace items
-      return elements.map(el => {
-        const contenu = el.innerText.replace(/\s+/g, ' ');
-        const prixRegex = /(\d+,\d{2})€/;
-        const prixMatch = contenu.match(prixRegex);
-        const prix = prixMatch ? prixMatch[1] : 'Non trouvé';
-        const titre = contenu.replace(prixRegex, '').trim().split('\n')[0];
-        return { titre, prix };
-      });
-    }, selector);
+const printComparison = (label, resultatsValides) => {
+  const magasins = Object.keys(resultatsValides);
+  console.log('\n' + '='.repeat(52));
+  console.log(`📊  COMPARAISON — ${label}`);
 
-    const titles = productsData.map(p => p.titre);
-    for (const produit of productsData) {
-      if (validateTitle(produit.titre, productName)) {
-        return { status: 'found', product: produit };
-      }
-    }
-
-    return { status: 'not_found', titles: titles };
-  } finally {
-    await page.close();
-    await context.close();
+  if (magasins.length === 0) {
+    console.log("❌  Aucun magasin n'a trouvé de prix valide.");
+  } else if (magasins.length === 1) {
+    const [seul] = magasins;
+    console.log(`⚠️  Seul ${capitalize(seul)} a trouvé ce produit.`);
+    console.log(`     → ${capitalize(seul)} : ${resultatsValides[seul].prix.toFixed(2)}€`);
+    console.log(`     → "${resultatsValides[seul].titre}"`);
+  } else {
+    const classement = [...magasins].sort(
+      (a, b) => resultatsValides[a].prix - resultatsValides[b].prix
+    );
+    const prixMin = resultatsValides[classement[0]].prix;
+    console.log(`\n🏆  ${capitalize(classement[0])} est le moins cher !`);
+    classement.forEach((mag, i) => {
+      const medal = ['🥇', '🥈', '🥉'][i] ?? '  ';
+      const diff = resultatsValides[mag].prix - prixMin;
+      const diffStr = diff > 0 ? `  (+${diff.toFixed(2)}€)` : '';
+      console.log(`  ${medal} ${capitalize(mag).padEnd(14)} ${resultatsValides[mag].prix.toFixed(2)}€${diffStr}`);
+      console.log(`       "${resultatsValides[mag].titre}"`);
+    });
   }
+  console.log('='.repeat(52) + '\n');
 };
-
-const scrapeLidl = async (browser, productName) => {
-  const context = await browser.newContext({
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-  });
-  const page = await context.newPage();
-  await page.route('**/*', (route) => {
-    const type = route.request().resourceType();
-    if (['image', 'media', 'font', 'stylesheet'].includes(type)) {
-      route.abort();
-    } else {
-      route.continue();
-    }
-  });
-
-  try {
-    const searchKeyword = productName.split(' ')[0];
-    console.log(`🚀 [Lidl] Recherche de "${searchKeyword}"...`);
-    await page.goto(`https://www.lidl.fr/q/search?q=${encodeURIComponent(searchKeyword)}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-
-    const acceptButtonSelector = '#onetrust-accept-btn-handler';
-    try {
-      await page.waitForSelector(acceptButtonSelector, { timeout: 5000 });
-      await page.click(acceptButtonSelector);
-      console.log("✅ [Lidl] Bannière de cookies acceptée.");
-    } catch (error) {
-      console.log("ℹ️ [Lidl] Pas de bannière de cookies trouvée ou déjà acceptée.");
-    }
-
-    console.log("⏳ [Lidl] Lecture du code source...");
-    const selector = '[data-testselector="s-product-grid__list-item"]';
-    await page.waitForSelector(selector, { state: 'attached', timeout: 30000 });
-    
-    const productsData = await page.evaluate((sel) => {
-      const elements = Array.from(document.querySelectorAll(sel)).slice(0, 5);
-      return elements.map(el => {
-        const jsonData = JSON.parse(el.dataset.gridData);
-        let prix = 'Non trouvé';
-        if (jsonData.price && jsonData.price.price) {
-            prix = jsonData.price.price.toString();
-        } else if (jsonData.lidlPlus && jsonData.lidlPlus.length > 0 && jsonData.lidlPlus[0].price && jsonData.lidlPlus[0].price.price) {
-            prix = jsonData.lidlPlus[0].price.price.toString();
-        }
-        return {
-          titre: jsonData.fullTitle,
-          prix: prix.replace('.', ',')
-        };
-      });
-    }, selector);
-
-    const titles = productsData.map(p => p.titre);
-    for (const produit of productsData) {
-      if (validateTitle(produit.titre, productName)) {
-        return { status: 'found', product: produit };
-      }
-    }
-
-    return { status: 'not_found', titles: titles };
-  } finally {
-    await page.close();
-    await context.close();
-  }
-};
-
 
 (async () => {
-  console.log("⚡ Mode Turbo activé (Fenêtre non visible)...");
+  console.log('⚡ Comparateur de prix — démarrage\n');
+  console.log(`🤖 Scrapers  : ${Object.keys(scrapers).map((s) => s.toUpperCase()).join(', ')}`);
+  console.log(`🛒 Produits  : ${PRODUCTS.map((p) => p.label).join(', ')}\n`);
+
   const browser = await chromium.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
   });
 
-  const productsToCompare = ['Nutella 825g', 'Coca-cola 1.5l'];
+  for (const { label, query } of PRODUCTS) {
+    console.log(`\n${'─'.repeat(52)}`);
+    console.log(`🔍  ${label}  (requête : "${query}")`);
+    console.log(`${'─'.repeat(52)}`);
 
-  for (const product of productsToCompare) {
-    console.log(`\n\n==================== Recherche pour: ${product} ====================`);
-    let carrefourProduct, lidlProduct;
-    let isCarrefourValid = false, isLidlValid = false;
+    const tasks = Object.entries(scrapers).map(([name, fn]) =>
+      fn(browser, query)
+        .then((result) => ({ name, result }))
+        .catch((err) => ({ name, result: { status: 'error', message: err.message } }))
+    );
 
-    try {
-      const carrefourResult = await scrapeCarrefour(browser, product);
-      if (carrefourResult.status === 'found') {
-        carrefourProduct = carrefourResult.product;
-        if (carrefourProduct.prix !== 'Non trouvé') {
-            console.log("\n✅ [Carrefour] Produit trouvé et validé :");
-            console.log(`   - Titre: ${carrefourProduct.titre}`);
-            console.log(`   - Prix: ${carrefourProduct.prix}€`);
-            isCarrefourValid = true;
-        } else {
-            console.log(`❌ [Carrefour] Produit validé mais prix non trouvé : "${carrefourProduct.titre}"`);
+    const results = await Promise.all(tasks);
+    const resultatsValides = {};
+
+    for (const { name, result } of results) {
+      if (result.status === 'found') {
+        const prix = parseFloat(result.product.prix.replace(',', '.'));
+        if (!isNaN(prix)) {
+          resultatsValides[name] = { titre: result.product.titre, prix };
         }
-      } else {
-        console.log("❌ [Carrefour] Aucun produit correspondant trouvé dans le top 5.");
-        console.log("   - Titres vérifiés :", carrefourResult.titles);
       }
-    } catch (error) {
-      console.log(`❌ [Carrefour] Erreur lors de la recherche : ${error.message}`);
     }
 
-    console.log("\n" + "-".repeat(30) + "\n");
-
-    try {
-      const lidlResult = await scrapeLidl(browser, product);
-      if (lidlResult.status === 'found') {
-        lidlProduct = lidlResult.product;
-        if (lidlProduct.prix !== 'Non trouvé') {
-            console.log("\n✅ [Lidl] Produit trouvé et validé :");
-            console.log(`   - Titre: ${lidlProduct.titre}`);
-            console.log(`   - Prix: ${lidlProduct.prix}€`);
-            isLidlValid = true;
-        } else {
-            console.log(`❌ [Lidl] Produit validé mais prix non trouvé : "${lidlProduct.titre}"`);
-        }
-      } else {
-        console.log("❌ [Lidl] Aucun produit correspondant trouvé dans le top 5.");
-        console.log("   - Titres vérifiés :", lidlResult.titles);
-      }
-    } catch (error) {
-      console.log(`❌ [Lidl] Erreur lors de la recherche : ${error.message}`);
-    }
-
-    // Basic comparison only if both are valid
-    if (isCarrefourValid && isLidlValid) {
-        const prixCarrefour = parseFloat(carrefourProduct.prix.replace(',', '.'));
-        const prixLidl = parseFloat(lidlProduct.prix.replace(',', '.'));
-
-        console.log("\n" + "=".repeat(30) + "\n");
-        console.log("📊 COMPARAISON");
-        if (prixCarrefour < prixLidl) {
-            console.log(`🎉 Carrefour est moins cher !`);
-        } else if (prixLidl < prixCarrefour) {
-            console.log(`🎉 Lidl est moins cher !`);
-        } else {
-            console.log(`⚖️ Les prix sont identiques.`);
-        }
-        console.log(`   - Carrefour: ${prixCarrefour.toFixed(2)}€`);
-        console.log(`   - Lidl: ${prixLidl.toFixed(2)}€`);
-        console.log("=".repeat(30));
-    } else {
-        console.log("\n" + "=".repeat(30) + "\n");
-        console.log("📊 COMPARAISON IMPOSSIBLE : Un ou plusieurs produits n'ont pas été validés.");
-        console.log("=".repeat(30));
-    }
+    printComparison(label, resultatsValides);
   }
 
   await browser.close();
-  console.log("\n🏁 Navigateur fermé.");
+  console.log('🏁 Terminé.');
 })();
