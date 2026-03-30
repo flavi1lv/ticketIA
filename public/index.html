@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Scan&Save</title>
+</head>
+<body style="font-family: Arial, sans-serif; text-align: center; margin-top: 50px;">
+    <h1>🛒 Scan&Save</h1>
+    <p>La chasse aux prix est ouverte !</p>
+    
+    <button id="btn-scan" style="padding: 10px 20px; font-size: 16px; cursor: pointer;">
+        Lancer l'analyse du ticket
+    </button>
+    
+    <div id="resultat" style="margin-top: 20px; font-weight: bold; color: green;"></div>
+
+    <script>
+        document.getElementById('btn-scan').addEventListener('click', async () => {
+            document.getElementById('resultat').innerText = "⏳ Recherche en cours (simulation)...";
+            
+            // On appelle le serveur
+            const reponse = await fetch('/api/comparer-ticket', { method: 'POST' });
+            const data = await reponse.json();
+            
+            // On affiche le résultat
+            document.getElementById('resultat').innerHTML = `
+                🏆 L'enseigne la moins chère : ${data.enseigneGagnante} <br>
+                💶 Prix de votre panier : ${data.prixTotal} €
+            `;
+        });
+    </script>
+</body>
+</html>
