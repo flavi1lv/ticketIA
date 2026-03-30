@@ -1,24 +1,17 @@
 {
   "name": "ticketia",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Comparateur de prix de supermarchés",
+  "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/flavi1lv/ticketIA.git"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
-  "bugs": {
-    "url": "https://github.com/flavi1lv/ticketIA/issues"
-  },
-  "homepage": "https://github.com/flavi1lv/ticketIA#readme",
   "dependencies": {
+    "express": "^4.18.2",
     "playwright": "^1.58.2"
   }
 }
