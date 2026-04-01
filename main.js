@@ -4,75 +4,56 @@ chromium.use(stealth);
 
 const path = require('path');
 const fs = require('fs');
+const { scanReceipt } = require('./utils/scanner');
+const { validateTitle } = require('./utils/helpers');
 
 const scrapersDir = path.join(__dirname, 'scrapers');
 const scrapers = {};
-for (const file of fs.readdirSync(scrapersDir).filter((f) => f.endsWith('.js'))) {
-  scrapers[file.replace('.js', '')] = require(path.join(scrapersDir, file));
+if (fs.existsSync(scrapersDir)) {
+  fs.readdirSync(scrapersDir).forEach(file => {
+    if (file.endsWith('.js')) scrapers[file.replace('.js', '')] = require(path.join(scrapersDir, file));
+  });
 }
 
-const PRODUCTS = [
-  { label: 'Nutella 1kg', query: 'Nutella 1kg' },
-];
-
-const printComparison = (label, resultatsValides) => {
-  const magasins = Object.keys(resultatsValides);
-  console.log('\n' + '='.repeat(55));
-  console.log(`📊  COMPARAISON — ${label.toUpperCase()}`);
-
-  if (magasins.length === 0) {
-    console.log("❌  Aucun résultat exploitable trouvé.");
-  } else {
-    const classement = [...magasins].sort((a, b) => resultatsValides[a].prix - resultatsValides[b].prix);
-    const prixMin = resultatsValides[classement[0]].prix;
-    
-    console.log(`🏆  Le moins cher : ${classement[0].toUpperCase()}\n`);
-    classement.forEach((mag, i) => {
-      const medal = i === 0 ? '🥇' : '  ';
-      const diff = resultatsValides[mag].prix - prixMin;
-      console.log(`${medal} ${mag.toUpperCase().padEnd(12)} : ${resultatsValides[mag].prix.toFixed(2)}€ ${diff > 0 ? `(+${diff.toFixed(2)}€)` : ''}`);
-      console.log(`   "${resultatsValides[mag].titre}"`);
-    });
-  }
-  console.log('='.repeat(55) + '\n');
-};
-
 (async () => {
-  console.log('⚡ Comparateur Démarré (Mode Stealth Actif)\n');
+  console.log('⚡ COMPARATEUR IA DÉMARRÉ\n');
+  const imagePath = path.join(__dirname, 'ticket.jpg');
 
-  // CONSEIL : headless: false aide énormément à passer les anti-bots au début
-  const browser = await chromium.launch({
-    headless: true, 
-    args: ['--disable-blink-features=AutomationControlled']
-  });
+  const articles = await scanReceipt(imagePath);
+  if (articles.length === 0) return console.log("❌ Aucun article trouvé.");
 
-  for (const { label, query } of PRODUCTS) {
-    console.log(`🔍 Recherche : "${query}"`);
+  console.log('\n📋 PANIER DÉTECTÉ :');
+  console.table(articles);
 
-    const tasks = Object.entries(scrapers).map(async ([name, fn]) => {
+  const browser = await chromium.launch({ headless: true });
+
+  for (const item of articles) {
+    console.log(`\n🔎 Recherche : "${item.nom}" (${item.prix}€)`);
+    const results = {};
+
+    for (const [name, scraperFn] of Object.entries(scrapers)) {
       try {
-        const res = await fn(browser, query);
-        return { name, res };
-      } catch (e) {
-        return { name, res: { status: 'error', message: e.message } };
-      }
-    });
-
-    const results = await Promise.all(tasks);
-    const validResults = {};
-
-    for (const { name, res } of results) {
-      if (res.status === 'found') {
-        const p = parseFloat(res.product.prix.replace(',', '.'));
-        if (!isNaN(p)) validResults[name] = { titre: res.product.titre, prix: p };
-      } else {
-        console.log(`⚠️  [${name}] ${res.status === 'not_found' ? 'Non trouvé' : 'Erreur'}`);
-      }
+        const res = await scraperFn(browser, item.nom);
+        if (res.status === 'found' && validateTitle(res.product.titre, item.nom)) {
+          results[name] = {
+            titre: res.product.titre,
+            prix: parseFloat(res.product.prix.replace(',', '.'))
+          };
+        }
+      } catch (e) { console.log(`   ⚠️ Erreur scraper ${name}`); }
     }
 
-    printComparison(label, validResults);
+    const magasins = Object.keys(results);
+    if (magasins.length > 0) {
+      const pTicket = parseFloat(item.prix.replace(',', '.'));
+      const sorted = magasins.sort((a, b) => results[a].prix - results[b].prix);
+      const best = results[sorted[0]];
+      console.log(`   🏆 Meilleur : ${sorted[0].toUpperCase()} (${best.prix.toFixed(2)}€)`);
+      if (best.prix < pTicket) console.log(`   💡 GAIN : -${(pTicket - best.prix).toFixed(2)}€`);
+    } else {
+      console.log(`   ❌ Non trouvé ailleurs.`);
+    }
   }
 
-  console.log('🏁 Analyse terminée. Fermeture du navigateur...');
   await browser.close();
 })();
