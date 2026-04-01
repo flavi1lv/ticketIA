@@ -28,7 +28,16 @@ const validateTitle = (titre, productName) => {
     .filter((k) => k.length > 1);
 
   const titreLower = normalize(titre);
-  return keywords.every((keyword) => titreLower.includes(keyword));
+  
+  // Vérification de base : tous les mots clés sont présents
+  const matchesAll = keywords.every((keyword) => titreLower.includes(keyword));
+  if (matchesAll) return true;
+
+  // Fallback : au moins 70% des mots clés sont présents (pour les titres tronqués)
+  const matchCount = keywords.filter((keyword) => titreLower.includes(keyword)).length;
+  const ratio = matchCount / keywords.length;
+  
+  return ratio >= 0.7;
 };
 
 /**
@@ -38,15 +47,19 @@ const validateTitle = (titre, productName) => {
 const normalizePrice = (rawText) => {
   if (!rawText) return null;
 
-  const text = String(rawText).replace(/\s/g, '');
+  const text = String(rawText).replace(/\s/g, '').replace(',', '.');
 
   // Format décimal classique : 5,89 ou 5.89 (suivi ou non de €)
-  let match = text.match(/(\d{1,4})[,.](\d{2})€?/);
+  let match = text.match(/(\d{1,4})[.](\d{2})€?/);
   if (match) return `${match[1]},${match[2]}`;
 
   // Format 5€89
   match = text.match(/(\d{1,4})€(\d{2})/);
   if (match) return `${match[1]},${match[2]}`;
+
+  // Format prix rond : 5€ ou 5.0
+  match = text.match(/^(\d{1,4})€?$/);
+  if (match) return `${match[1]},00`;
 
   // Prix en centimes depuis une API JSON (ex: 589 → 5,89)
   match = text.match(/^(\d{3,5})$/);

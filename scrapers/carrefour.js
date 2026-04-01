@@ -1,4 +1,4 @@
-const { validateTitle, normalizePrice, withRetry } = require('../utils/helpers');
+const { validateTitle, normalizePrice, withRetry, sleep } = require('../utils/helpers');
 
 const scrapeCarrefour = async (browser, searchQuery) => {
   const context = await browser.newContext({
@@ -21,11 +21,45 @@ const scrapeCarrefour = async (browser, searchQuery) => {
 
   try {
     return await withRetry(async () => {
-      const url = `https://www.carrefour.fr/s?q=${encodeURIComponent(searchQuery)}`;
+      const capturedProducts = [];
+
+      const responseHandler = async (response) => {
+        try {
+          const url = response.url();
+          if (url.includes('/api/v1/search') || url.includes('search-api')) {
+            const json = await response.json();
+            const items = json?.data?.search?.products || json?.data?.products || json?.products || [];
+            items.forEach(item => {
+              capturedProducts.push({
+                titre: item.name || item.label || item.title,
+                rawPrice: item.price?.amount || item.price?.value || item.prices?.v3?.salePrice?.amount
+              });
+            });
+          }
+        } catch (e) {}
+      };
+
+      page.on('response', responseHandler);
+
+      // On utilise une URL qui déclenche souvent l'API de recherche
+      const url = `https://www.carrefour.fr/s?q=${encodeURIComponent(searchQuery)}&sort=relevance`;
       console.log(`🚀 [Carrefour] GET ${url}`);
 
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
+      // Accepter les cookies pour voir les prix
+      try {
+        const cookieBtn = page.locator('#onetrust-accept-btn-handler');
+        if (await cookieBtn.isVisible({ timeout: 3000 })) {
+          await cookieBtn.click();
+        }
+      } catch (e) {}
+
+      // Crucial : On attend que la liste des produits soit réellement rendue
+      await page.waitForSelector('[data-testid="product-card"], article', { timeout: 15000 }).catch(() => {});
+      await sleep(2000);
+
+      // Fallback DOM si l'API n'a pas été capturée
       // Attend l'un de ces sélecteurs de carte produit
       const cardSelectors = [
         'a[class*="product-card"]',
@@ -44,8 +78,21 @@ const scrapeCarrefour = async (browser, searchQuery) => {
         } catch { /* essaie le suivant */ }
       }
 
+      page.off('response', responseHandler);
+
+      // On teste d'abord les produits capturés via API (plus précis)
+      if (capturedProducts.length > 0) {
+        for (const p of capturedProducts) {
+          const prix = normalizePrice(p.rawPrice);
+          const isValid = validateTitle(p.titre, searchQuery);
+          if (prix && isValid) {
+            console.log(`✅ [Carrefour] (API) "${p.titre}" → ${prix}€`);
+            return { status: 'found', product: { titre: p.titre, prix } };
+          }
+        }
+      }
+
       if (!cardSelector) {
-        console.log('❌ [Carrefour] Aucun sélecteur de carte trouvé.');
         return { status: 'not_found', titles: [] };
       }
 
@@ -84,11 +131,14 @@ const scrapeCarrefour = async (browser, searchQuery) => {
           let titre = '';
           for (const candidate of titleCandidates) {
             const text = candidate.textContent.replace(/\s+/g, ' ').trim();
-            // Ignore si le texte ressemble à un prix seul ou est trop court
             if (text.length > 5 && !PRICE_REGEX.test(text)) {
               titre = text.slice(0, 200);
               break;
             }
+          }
+          
+          if (!titre) {
+            titre = el.querySelector('h2, h3')?.textContent.trim() || '';
           }
 
           // Fallback titre : première ligne du texte complet qui n'est pas un prix
