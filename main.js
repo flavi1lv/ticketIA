@@ -27,33 +27,79 @@ if (fs.existsSync(scrapersDir)) {
 
   const browser = await chromium.launch({ headless: true });
 
+  // NOUVEAU : On prépare nos "paniers virtuels" pour le total final !
+  let totalTicketOriginal = 0;
+  const totauxMagasins = {};
+  for (const name of Object.keys(scrapers)) {
+      totauxMagasins[name] = 0; // On met les compteurs à zéro
+  }
+
   for (const item of articles) {
-    console.log(`\n🔎 Recherche : "${item.nom}" (${item.prix}€)`);
+    const pTicket = parseFloat(item.prix.replace(',', '.'));
+    totalTicketOriginal += pTicket; // On ajoute le prix au ticket de base
+
+    console.log(`\n🔎 Recherche : "${item.nom}" (${pTicket.toFixed(2)}€)`);
     const results = {};
 
     for (const [name, scraperFn] of Object.entries(scrapers)) {
       try {
         const res = await scraperFn(browser, item.nom);
+        
         if (res.status === 'found' && validateTitle(res.product.titre, item.nom)) {
-          results[name] = {
-            titre: res.product.titre,
-            prix: parseFloat(res.product.prix.replace(',', '.'))
-          };
+            const scrapedPrix = parseFloat(res.product.prix.replace(',', '.'));
+            
+            // NOUVEAU : TA RÈGLE DES 30% DE DIFFÉRENCE MAX !
+            const differenceRatio = Math.abs(scrapedPrix - pTicket) / pTicket;
+            
+            if (differenceRatio <= 0.30) { // Si la différence est de 30% ou moins
+                results[name] = { titre: res.product.titre, prix: scrapedPrix };
+            } else {
+                console.log(`   ⚠️ [${name}] Rejeté : Prix trop différent (${scrapedPrix.toFixed(2)}€ au lieu de ${pTicket.toFixed(2)}€)`);
+            }
         }
       } catch (e) { console.log(`   ⚠️ Erreur scraper ${name}`); }
+      
+      // NOUVEAU : TON IDÉE DE SUBSTITUTION (Fallback)
+      if (results[name]) {
+          // S'il a trouvé le produit et passé le test des 30%, on ajoute le vrai prix
+          totauxMagasins[name] += results[name].prix;
+      } else {
+          // S'il n'a rien trouvé (ou rejeté), on remplace par le prix du ticket d'origine !
+          totauxMagasins[name] += pTicket;
+      }
     }
 
-    const magasins = Object.keys(results);
-    if (magasins.length > 0) {
-      const pTicket = parseFloat(item.prix.replace(',', '.'));
-      const sorted = magasins.sort((a, b) => results[a].prix - results[b].prix);
+    const magasinsTrouves = Object.keys(results);
+    if (magasinsTrouves.length > 0) {
+      const sorted = magasinsTrouves.sort((a, b) => results[a].prix - results[b].prix);
       const best = results[sorted[0]];
-      console.log(`   🏆 Meilleur : ${sorted[0].toUpperCase()} (${best.prix.toFixed(2)}€)`);
-      if (best.prix < pTicket) console.log(`   💡 GAIN : -${(pTicket - best.prix).toFixed(2)}€`);
+      console.log(`   🏆 Moins cher trouvé chez : ${sorted[0].toUpperCase()} (${best.prix.toFixed(2)}€)`);
     } else {
-      console.log(`   ❌ Non trouvé ailleurs.`);
+      console.log(`   ❌ Produit introuvable ou rejeté (on garde le prix de base).`);
     }
   }
 
   await browser.close();
+
+  // NOUVEAU : LE GRAND CLASSEMENT FINAL !
+  console.log('\n=========================================');
+  console.log('🛒 BILAN DES COURSES (Total des paniers)');
+  console.log('=========================================');
+  console.log(`🧾 Ticket original : ${totalTicketOriginal.toFixed(2)}€`);
+  
+  // On trie les magasins du moins cher au plus cher sur le total
+  const classementFinal = Object.keys(totauxMagasins).sort((a, b) => totauxMagasins[a] - totauxMagasins[b]);
+  
+  for (const magasin of classementFinal) {
+      const total = totauxMagasins[magasin];
+      const diff = totalTicketOriginal - total;
+      
+      let message = `🏪 ${magasin.toUpperCase()} : ${total.toFixed(2)}€`;
+      if (diff > 0) message += ` (💡 Économie : ${diff.toFixed(2)}€)`;
+      else if (diff < 0) message += ` (💸 Perte : ${Math.abs(diff).toFixed(2)}€)`;
+      
+      console.log(message);
+  }
+  console.log('=========================================\n');
+
 })();
