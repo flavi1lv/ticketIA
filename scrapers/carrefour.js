@@ -1,180 +1,110 @@
 const { validateTitle, normalizePrice, withRetry, sleep } = require('../utils/helpers');
 
 const scrapeCarrefour = async (browser, searchQuery) => {
-  const context = await browser.newContext({
-    userAgent:
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-      '(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    locale: 'fr-FR',
-    extraHTTPHeaders: { 'Accept-Language': 'fr-FR,fr;q=0.9' },
-  });
-  const page = await context.newPage();
+  return await withRetry(async () => {
+    const context = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+      viewport: { width: 1920, height: 1080 },
+      locale: 'fr-FR',
+      extraHTTPHeaders: { 'Accept-Language': 'fr-FR,fr;q=0.9' }
+    });
+    
+    const page = await context.newPage();
 
-  await page.route('**/*', (route) => {
-    const type = route.request().resourceType();
-    if (['image', 'media', 'font', 'stylesheet'].includes(type)) {
-      route.abort();
-    } else {
-      route.continue();
-    }
-  });
+    try {
+      // ⚡ Optimisation : on bloque le chargement des images et styles
+      await page.route('**/*', route => {
+        const type = route.request().resourceType();
+        if (['image', 'media', 'font', 'stylesheet'].includes(type)) route.abort();
+        else route.continue();
+      });
 
-  try {
-    return await withRetry(async () => {
+      // 🧠 L'ARME SECRÈTE (Issue du GitHub) : L'écouteur d'API
       const capturedProducts = [];
-
       const responseHandler = async (response) => {
         try {
           const url = response.url();
+          // On intercepte les requêtes de recherche de Carrefour
           if (url.includes('/api/v1/search') || url.includes('search-api')) {
             const json = await response.json();
             const items = json?.data?.search?.products || json?.data?.products || json?.products || [];
             items.forEach(item => {
               capturedProducts.push({
-                titre: item.name || item.label || item.title,
-                rawPrice: item.price?.amount || item.price?.value || item.prices?.v3?.salePrice?.amount
+                titre: item.name || item.label || item.title || '',
+                rawPrice: item.price?.amount || item.price?.value || item.prices?.v3?.salePrice?.amount || ''
               });
             });
           }
-        } catch (e) {}
+        } catch (e) { /* Ignoré silencieusement pour ne pas polluer la console */ }
       };
 
+      // On active l'écouteur juste avant d'aller sur la page
       page.on('response', responseHandler);
 
-      // On utilise une URL qui déclenche souvent l'API de recherche
-      const url = `https://www.carrefour.fr/s?q=${encodeURIComponent(searchQuery)}&sort=relevance`;
-      console.log(`🚀 [Carrefour] GET ${url}`);
+      // 🧹 ASTUCE : On retire les poids/volumes pour la barre de recherche (ex: "Nutella 1kg" -> "Nutella")
+      const searchTxt = searchQuery.replace(/\b\d+([.,]\d+)?\s*(g|kg|l|cl|ml)\b/gi, '').trim();
+      const url = `https://www.carrefour.fr/s?q=${encodeURIComponent(searchTxt || searchQuery)}&sort=relevance`;
+      
+      console.log(`   🌐 [CARREFOUR] Lien : ${url}`);
 
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.locator('#onetrust-accept-btn-handler').click({ timeout: 2000 }).catch(() => {});
+      
+      await page.waitForSelector('[data-testid="product-card"], article', { timeout: 10000 }).catch(() => {});
+      await sleep(1500);
 
-      // Accepter les cookies pour voir les prix
-      try {
-        const cookieBtn = page.locator('#onetrust-accept-btn-handler');
-        if (await cookieBtn.isVisible({ timeout: 3000 })) {
-          await cookieBtn.click();
-        }
-      } catch (e) {}
-
-      // Crucial : On attend que la liste des produits soit réellement rendue
-      await page.waitForSelector('[data-testid="product-card"], article', { timeout: 15000 }).catch(() => {});
-      await sleep(2000);
-
-      // Fallback DOM si l'API n'a pas été capturée
-      // Attend l'un de ces sélecteurs de carte produit
-      const cardSelectors = [
-        'a[class*="product-card"]',
-        '[data-testid="product-card"]',
-        'article[class*="product"]',
-        '[class*="ProductCard"]',
-        '[class*="product-thumbnail"]',
-      ];
-
-      let cardSelector = null;
-      for (const sel of cardSelectors) {
-        try {
-          await page.waitForSelector(sel, { state: 'attached', timeout: 8000 });
-          cardSelector = sel;
-          break;
-        } catch { /* essaie le suivant */ }
-      }
-
+      // On désactive l'écouteur pour libérer la mémoire
       page.off('response', responseHandler);
 
-      // On teste d'abord les produits capturés via API (plus précis)
+      // 🚀 TENTATIVE 1 : VIA L'API INTERCEPTÉE (Priorité)
       if (capturedProducts.length > 0) {
         for (const p of capturedProducts) {
           const prix = normalizePrice(p.rawPrice);
-          const isValid = validateTitle(p.titre, searchQuery);
-          if (prix && isValid) {
-            console.log(`✅ [Carrefour] (API) "${p.titre}" → ${prix}€`);
-            return { status: 'found', product: { titre: p.titre, prix } };
+          // 🚨 On valide le titre avec la requête D'ORIGINE complète (qui contient le poids !)
+          if (prix && validateTitle(p.titre, searchQuery)) {
+            const textToAnalyze = (p.rawPrice + " " + p.titre).toLowerCase();
+            const isKg = textToAnalyze.includes('/kg') || textToAnalyze.includes('le kg');
+            return { status: 'found', product: { titre: p.titre, prix, unitPrice: prix, isKg } };
           }
         }
       }
 
-      if (!cardSelector) {
-        return { status: 'not_found', titles: [] };
-      }
-
-      const productsData = await page.evaluate((sel) => {
-        const PRICE_REGEX = /^\s*\d{1,4}[,.\s]\d{2}\s*€?\s*$/;
-
-        const cards = Array.from(document.querySelectorAll(sel))
-          .filter((el) => {
-            const text = el.textContent || '';
-            return !text.includes('Vendu et livré par') && !text.includes('marketplace');
-          })
-          .slice(0, 5);
-
-        return cards.map((el) => {
-          // ── Prix : cherche un élément sémantique dédié ──────────────────
-          const priceEl = el.querySelector(
-            '[class*="price__amount"], [class*="price-amount"], ' +
-            '[class*="price__per-unit"], [class*="product-price"], ' +
-            '[class*="selling-price"], [class*="Price"], ' +
-            '[itemprop="price"], [data-testid*="price"]'
-          );
-          let rawPrice = priceEl ? priceEl.textContent.trim() : '';
-
-          // Fallback prix : regex sur le texte complet
-          if (!rawPrice) {
-            const fullText = el.textContent.replace(/\s+/g, ' ');
-            const m = fullText.match(/(\d{1,3}[,.\s]\d{2})\s*€/);
-            if (m) rawPrice = m[0];
+      // 🐢 TENTATIVE 2 : VIA LE DOM (Fallback si l'API a changé ou n'a pas répondu)
+      const products = await page.evaluate(() => {
+        const selectors = ['[data-testid="product-card"]', 'article[class*="product"]', 'a[class*="product-card"]'];
+        for (const sel of selectors) {
+          const cards = document.querySelectorAll(sel);
+          if (cards.length > 0) {
+            return Array.from(cards).slice(0, 15).map(el => {
+              const titleEl = el.querySelector('h2, h3, [class*="title"], [class*="name"]');
+              const priceEl = el.querySelector('[class*="price"], [itemprop="price"]');
+              return { 
+                titre: titleEl?.innerText?.trim() || '', 
+                rawPrice: priceEl?.innerText?.trim() || '' 
+              };
+            }).filter(p => p.titre.length > 3 && p.rawPrice);
           }
+        }
+        return [];
+      });
 
-          // ── Titre : cherche un élément qui ne ressemble PAS à un prix ───
-          const titleCandidates = Array.from(
-            el.querySelectorAll('[class*="title"], [class*="name"], [class*="description"], h2, h3, h4')
-          );
-
-          let titre = '';
-          for (const candidate of titleCandidates) {
-            const text = candidate.textContent.replace(/\s+/g, ' ').trim();
-            if (text.length > 5 && !PRICE_REGEX.test(text)) {
-              titre = text.slice(0, 200);
-              break;
-            }
-          }
-          
-          if (!titre) {
-            titre = el.querySelector('h2, h3')?.textContent.trim() || '';
-          }
-
-          // Fallback titre : première ligne du texte complet qui n'est pas un prix
-          if (!titre) {
-            const lines = el.textContent
-              .split(/\n/)
-              .map((l) => l.replace(/\s+/g, ' ').trim())
-              .filter((l) => l.length > 5 && !PRICE_REGEX.test(l));
-            titre = lines[0]?.slice(0, 200) || '';
-          }
-
-          return { titre, rawPrice };
-        }).filter((p) => p.titre.length > 3);
-      }, cardSelector);
-
-      for (const produit of productsData) {
-        const prix = normalizePrice(produit.rawPrice);
-        if (prix && validateTitle(produit.titre, searchQuery)) {
-          console.log(`✅ [Carrefour] "${produit.titre}" → ${prix}€`);
-          return { status: 'found', product: { titre: produit.titre, prix } };
+      for (const p of products) {
+        const price = normalizePrice(p.rawPrice);
+        if (price && validateTitle(p.titre, searchQuery)) {
+          const textToAnalyze = (p.rawPrice + " " + p.titre).toLowerCase();
+          const isKg = textToAnalyze.includes('/kg') || textToAnalyze.includes('le kg');
+          return { status: 'found', product: { titre: p.titre, prix: price, unitPrice: price, isKg } };
         }
       }
 
-      const titles = productsData.map(
-        (p) => `"${p.titre.slice(0, 60)}" (prix brut: "${p.rawPrice}")`
-      );
-      console.log(`❌ [Carrefour] Aucun match parmi :\n   ${titles.join('\n   ')}`);
-      return { status: 'not_found', titles };
-    });
-  } catch (error) {
-    console.error(`💥 [Carrefour] ${error.message}`);
-    return { status: 'error', message: error.message };
-  } finally {
-    await page.close();
-    await context.close();
-  }
+      return { status: 'not_found' };
+
+    } finally {
+      // Fermeture sécurisée
+      await page.close().catch(() => {});
+      await context.close().catch(() => {});
+    }
+  }, 2, 2000);
 };
 
 module.exports = scrapeCarrefour;

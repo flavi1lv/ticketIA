@@ -5,101 +5,155 @@ chromium.use(stealth);
 const path = require('path');
 const fs = require('fs');
 const { scanReceipt } = require('./utils/scanner');
-const { validateTitle } = require('./utils/helpers');
 
+// 🛠️ 1. CHARGEMENT SÉCURISÉ DES SCRAPERS
 const scrapersDir = path.join(__dirname, 'scrapers');
 const scrapers = {};
+
 if (fs.existsSync(scrapersDir)) {
   fs.readdirSync(scrapersDir).forEach(file => {
-    if (file.endsWith('.js')) scrapers[file.replace('.js', '')] = require(path.join(scrapersDir, file));
+    if (file.endsWith('.js')) {
+      try {
+        const scraperName = file.replace('.js', '');
+        scrapers[scraperName] = require(path.join(scrapersDir, file));
+      } catch (err) {
+        console.error(`\x1b[31m❌ Erreur lors du chargement du scraper ${file} : ${err.message}\x1b[0m`);
+      }
+    }
   });
 }
 
+if (Object.keys(scrapers).length === 0) {
+  console.error("\x1b[31m❌ Aucun scraper n'a été trouvé dans le dossier 'scrapers/'. Fin du programme.\x1b[0m");
+  process.exit(1);
+}
+
+// 🚀 2. FONCTION PRINCIPALE
 (async () => {
-  console.log('⚡ COMPARATEUR IA DÉMARRÉ\n');
+  console.log('\x1b[36m⚡ COMPARATEUR IA DÉMARRÉ\n\x1b[0m');
   const imagePath = path.join(__dirname, 'ticket.jpg');
 
+  // Scanner le ticket
   const articles = await scanReceipt(imagePath);
-  if (articles.length === 0) return console.log("❌ Aucun article trouvé.");
+  
+  if (!articles || !Array.isArray(articles) || articles.length === 0) {
+    return console.log("\x1b[31m❌ Aucun article trouvé sur le ticket.\x1b[0m");
+  }
 
-  console.log('\n📋 PANIER DÉTECTÉ :');
+  console.log('\n\x1b[32m📋 PANIER DÉTECTÉ :\x1b[0m');
   console.table(articles);
 
+  // Lancement du navigateur (Headless = true pour aller plus vite)
   const browser = await chromium.launch({ headless: true });
 
-  // NOUVEAU : On prépare nos "paniers virtuels" pour le total final !
+  // Initialisation des compteurs financiers
   let totalTicketOriginal = 0;
   const totauxMagasins = {};
   for (const name of Object.keys(scrapers)) {
-      totauxMagasins[name] = 0; // On met les compteurs à zéro
+    totauxMagasins[name] = 0; 
   }
 
+  // 🛒 3. BOUCLE SUR LES ARTICLES DU TICKET
   for (const item of articles) {
-    const pTicket = parseFloat(item.prix.replace(',', '.'));
-    totalTicketOriginal += pTicket; // On ajoute le prix au ticket de base
+    // Sécurité : si l'IA n'a pas réussi à lire le prix, on ignore l'article
+    if (!item.prix) {
+      console.log(`\n\x1b[33m⚠️ Article ignoré (prix illisible) : "${item.nom}"\x1b[0m`);
+      continue;
+    }
 
-    console.log(`\n🔎 Recherche : "${item.nom}" (${pTicket.toFixed(2)}€)`);
+    // Conversion du format français "X,YY" en nombre JavaScript
+    const pTicket = parseFloat(item.prix.replace(',', '.'));
+    if (isNaN(pTicket)) continue;
+
+    totalTicketOriginal += pTicket;
+
+    console.log(`\n🔎 \x1b[1mRecherche : "${item.nom}"\x1b[0m (${pTicket.toFixed(2).replace('.', ',')}€)`);
     const results = {};
 
-    for (const [name, scraperFn] of Object.entries(scrapers)) {
+    // ⚡ NOUVEAU : PARALLÉLISATION DES SCRAPERS
+    // Au lieu d'attendre chaque supermarché l'un après l'autre, on lance tout en même temps !
+    const scraperPromises = Object.entries(scrapers).map(async ([name, scraperFn]) => {
       try {
         const res = await scraperFn(browser, item.nom);
         
-        if (res.status === 'found' && validateTitle(res.product.titre, item.nom)) {
-            const scrapedPrix = parseFloat(res.product.prix.replace(',', '.'));
-            
-            // NOUVEAU : TA RÈGLE DES 30% DE DIFFÉRENCE MAX !
-            const differenceRatio = Math.abs(scrapedPrix - pTicket) / pTicket;
-            
-            if (differenceRatio <= 0.30) { // Si la différence est de 30% ou moins
-                results[name] = { titre: res.product.titre, prix: scrapedPrix };
-            } else {
-                console.log(`   ⚠️ [${name}] Rejeté : Prix trop différent (${scrapedPrix.toFixed(2)}€ au lieu de ${pTicket.toFixed(2)}€)`);
-            }
+        // NB : La validation du titre (validateTitle) est déjà faite à l'intérieur de tes scrapers, 
+        // pas besoin de la refaire ici.
+        if (res && res.status === 'found') {
+          const scrapedPrix = parseFloat(res.product.prix.replace(',', '.'));
+          
+          // TA RÈGLE DES 30% DE DIFFÉRENCE MAX
+          const differenceRatio = Math.abs(scrapedPrix - pTicket) / pTicket;
+          
+          if (differenceRatio <= 0.30) {
+            results[name] = { titre: res.product.titre, prix: scrapedPrix };
+          } else {
+            console.log(`   \x1b[33m⚠️ [${name}] Rejeté : Prix trop différent (${scrapedPrix.toFixed(2)}€ au lieu de ${pTicket.toFixed(2)}€)\x1b[0m`);
+          }
         }
-      } catch (e) { console.log(`   ⚠️ Erreur scraper ${name}`); }
-      
-      // NOUVEAU : TON IDÉE DE SUBSTITUTION (Fallback)
+      } catch (e) { 
+        console.log(`   \x1b[31m⚠️ Erreur scraper [${name}] : ${e.message}\x1b[0m`); 
+      }
+    });
+
+    // On attend que TOUS les supermarchés aient fini de chercher ce produit
+    await Promise.all(scraperPromises);
+
+    // 🧮 4. CALCULS ET FALLBACK
+    for (const name of Object.keys(scrapers)) {
       if (results[name]) {
-          // S'il a trouvé le produit et passé le test des 30%, on ajoute le vrai prix
-          totauxMagasins[name] += results[name].prix;
+        // Trouvé et validé !
+        totauxMagasins[name] += results[name].prix;
       } else {
-          // S'il n'a rien trouvé (ou rejeté), on remplace par le prix du ticket d'origine !
-          totauxMagasins[name] += pTicket;
+        // Introuvable ou rejeté -> Fallback au prix du ticket
+        totauxMagasins[name] += pTicket;
       }
     }
 
+    // Affichage du meilleur prix pour cet article
     const magasinsTrouves = Object.keys(results);
     if (magasinsTrouves.length > 0) {
       const sorted = magasinsTrouves.sort((a, b) => results[a].prix - results[b].prix);
       const best = results[sorted[0]];
-      console.log(`   🏆 Moins cher trouvé chez : ${sorted[0].toUpperCase()} (${best.prix.toFixed(2)}€)`);
+      console.log(`   🏆 Moins cher trouvé chez : \x1b[32m${sorted[0].toUpperCase()}\x1b[0m (${best.prix.toFixed(2).replace('.', ',')}€) -> "${best.titre}"`);
     } else {
-      console.log(`   ❌ Produit introuvable ou rejeté (on garde le prix de base).`);
+      console.log(`   \x1b[31m❌ Introuvable partout\x1b[0m (On garde le prix de base : ${pTicket.toFixed(2).replace('.', ',')}€)`);
     }
   }
 
+  // Fermeture propre du navigateur
   await browser.close();
 
-  // NOUVEAU : LE GRAND CLASSEMENT FINAL !
-  console.log('\n=========================================');
-  console.log('🛒 BILAN DES COURSES (Total des paniers)');
-  console.log('=========================================');
-  console.log(`🧾 Ticket original : ${totalTicketOriginal.toFixed(2)}€`);
+  // 🏆 5. LE GRAND CLASSEMENT FINAL !
+  console.log('\n\x1b[44m\x1b[37m=========================================\x1b[0m');
+  console.log('\x1b[1m🛒 BILAN DES COURSES (Total des paniers)\x1b[0m');
+  console.log('\x1b[44m\x1b[37m=========================================\x1b[0m');
+  console.log(`🧾 Ticket original : \x1b[1m${totalTicketOriginal.toFixed(2).replace('.', ',')}€\x1b[0m\n`);
   
-  // On trie les magasins du moins cher au plus cher sur le total
+  // Tri du moins cher au plus cher
   const classementFinal = Object.keys(totauxMagasins).sort((a, b) => totauxMagasins[a] - totauxMagasins[b]);
   
-  for (const magasin of classementFinal) {
-      const total = totauxMagasins[magasin];
-      const diff = totalTicketOriginal - total;
-      
-      let message = `🏪 ${magasin.toUpperCase()} : ${total.toFixed(2)}€`;
-      if (diff > 0) message += ` (💡 Économie : ${diff.toFixed(2)}€)`;
-      else if (diff < 0) message += ` (💸 Perte : ${Math.abs(diff).toFixed(2)}€)`;
-      
-      console.log(message);
+  for (let i = 0; i < classementFinal.length; i++) {
+    const magasin = classementFinal[i];
+    const total = totauxMagasins[magasin];
+    const diff = totalTicketOriginal - total;
+    
+    // Formatage avec des couleurs pour rendre le verdict lisible
+    const isWinner = i === 0 && diff > 0;
+    const prefix = isWinner ? '🥇' : '🏪';
+    const color = diff > 0 ? '\x1b[32m' : (diff < 0 ? '\x1b[31m' : '\x1b[33m');
+    
+    let message = `${prefix} ${magasin.toUpperCase().padEnd(10)} : \x1b[1m${total.toFixed(2).replace('.', ',')}€\x1b[0m`;
+    
+    if (diff > 0) {
+      message += ` ${color}(💡 Économie : ${diff.toFixed(2).replace('.', ',')}€)\x1b[0m`;
+    } else if (diff < 0) {
+      message += ` ${color}(💸 Perte : ${Math.abs(diff).toFixed(2).replace('.', ',')}€)\x1b[0m`;
+    } else {
+      message += ` ${color}(⚖️ Prix identique)\x1b[0m`;
+    }
+    
+    console.log(message);
   }
-  console.log('=========================================\n');
+  console.log('\x1b[44m\x1b[37m=========================================\x1b[0m\n');
 
 })();

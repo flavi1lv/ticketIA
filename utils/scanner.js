@@ -1,18 +1,16 @@
-require('dotenv').config();
 const Tesseract = require('tesseract.js');
 const { normalizePrice } = require('./helpers');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenAI } = require('@google/genai'); 
+const config = require('../config');
 
-// 🎛️ L'INTERRUPTEUR : Choisis ton moteur IA ici ('gemini' ou 'ollama')
-const AI_PROVIDER = 'gemini'; 
-
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const AI_PROVIDER = config.aiProvider;
+const ai = new GoogleGenAI({ apiKey: config.geminiApiKey }); 
 
 const scanReceipt = async (imagePath) => {
   console.log(`📸 [1/2] OCR : Lecture...`);
   try {
     const { data: { text } } = await Tesseract.recognize(imagePath, 'fra');
-    console.log(`🧠 [2/2] ${AI_PROVIDER.toUpperCase()} : Traduction des abréviations...`);
+    console.log(`🧠 [2/2] ${AI_PROVIDER.toUpperCase()} : Structuration des données...`);
 
     const prompt = `
       Tu es une IA experte en produits de supermarchés français. 
@@ -44,11 +42,16 @@ const scanReceipt = async (imagePath) => {
 
     // 🚀 ROUTE 1 : GEMINI (Cloud gratuit et rapide)
     if (AI_PROVIDER === 'gemini') {
-      const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-      const result = await model.generateContent(prompt);
-      responseText = result.response.text();
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json"
+        }
+      });
+      responseText = response.text;
     } 
+    
     // 🐢 ROUTE 2 : OLLAMA (En local sur ta machine, pour plus tard)
     else if (AI_PROVIDER === 'ollama') {
       const response = await fetch('http://localhost:11434/api/generate', {
@@ -65,17 +68,15 @@ const scanReceipt = async (imagePath) => {
       responseText = data.response;
     }
 
-    // 🧹 NETTOYAGE : Sécurité pour retirer les balises markdown (```json) que Gemini peut ajouter
-    responseText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-    
     const result = JSON.parse(responseText);
     
-    return result.articles.map(a => ({
-      nom: a.nom.toUpperCase(),
-      prix: normalizePrice(a.prix)
+    return (result.articles || []).map(a => ({
+      nom: (a.nom || "INCONNU").toUpperCase(),
+      prix: normalizePrice(String(a.prix))
     }));
+
   } catch (error) {
-    console.error("💥 Erreur Scanner :", error);
+    console.error("💥 Erreur Scanner :", error.message || error);
     return [];
   }
 };
