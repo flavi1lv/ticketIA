@@ -15,21 +15,21 @@ const scanReceipt = async (imagePath) => {
     const prompt = `
       Tu es une IA experte en produits de supermarchés français. 
       Voici un texte brut issu de l'OCR d'un ticket de caisse.
-      TA MISSION : Traduire chaque ligne d'article en NOM DE PRODUIT COMPLET ET CHERCHABLE.
+      TA MISSION : Traduire chaque ligne d'article en NOM DE PRODUIT COMPLET ET CHERCHABLE pour un moteur de recherche e-commerce.
       
       EXEMPLES DE TRADUCTION :
       - "300G PATE PIZZA CO" -> "Pâte à pizza 300g"
-      - "250G SAUCIS.SECHE" -> "Saucisse sèche 250g"
+      - "250G SAUCIS.SECHE" -> "Saucisson sec 250g" (Convertir Saucisse sèche en Saucisson sec, plus commun)
       - "PET 1.25L FUZE TEA" -> "Fuze Tea 1.25L"
-      - "360G PAINS AU CHOC" -> "Pains au chocolat 360g"
+      - "6 RECH FRIXION ASS" -> "6 Recharges Frixion" (Garder les quantités importantes)
       - "BOT.1KG POIREAU" -> "Poireaux 1kg"
       
       CONSIGNES STRICTES :
-      - GARDE absolument les poids et volumes (ex: 600g, 1.25L, 250g, 1kg) car ils sont indispensables pour comparer les bons formats.
-      - SUPPRIME les mentions de lots ou quantités multiples (ex: X10, x6, lot de 3) qui perturbent les barres de recherche.
-      - CORRIGE les abréviations pour avoir le vrai nom du produit compréhensible par un humain.
-      - Ne garde que les vrais articles (ignore les lignes de TVA, les remises, les totaux, ou la carte de fidélité).
-      - Retourne UNIQUEMENT un objet JSON valide, sans aucun texte ou blabla avant ou après.
+      - GARDE absolument les poids et volumes (ex: 600g, 1.25L, 250g, 1kg).
+      - GARDE les quantités si elles définissent le produit (ex: "6", "x10").
+      - UTILISE les noms communs des produits (ex: "Saucisson" au lieu de "Saucisse sèche" si applicable).
+      - Ne garde que les vrais articles (ignore les lignes de TVA, les remises, les totaux).
+      - Retourne UNIQUEMENT un objet JSON valide.
       
       FORMAT ATTENDU : 
       { "articles": [ { "nom": "NOM_TRADUIT", "prix": "PRIX" } ] }
