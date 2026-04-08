@@ -1,93 +1,167 @@
-/**
- * Normalise un texte pour la recherche (gestion des accents, synonymes, volumes dynamiques)
- */
+// ---------------- NORMALISATION TEXTE ----------------
 function normalizeText(str) {
   if (!str) return "";
-  let text = String(str).toLowerCase()
-    // 1. Suppression des accents
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-    // 2. Remplacements des caractères spéciaux et synonymes
-    .replace(/œ/g, "oe") // Gère le fameux "œuf"
-    .replace(/\bsaucisse seche\b/g, "saucisson sec")
-    .replace(/\bsaucisses seches\b/g, "saucisson sec")
-    .replace(/\boeufs?\b/g, "oeuf"); // Met les oeufs au singulier
 
-  return text
-    // 3. Conversion dynamique des volumes et poids
-    .replace(/(\d+)[.,](\d+)\s*l\b/g, (_, p1, p2) => `${p1}${p2.padEnd(2, '0')}cl`) // Ex: 1.5L -> 150cl
-    .replace(/(\d+)\s*l\s*(\d+)/g, (_, p1, p2) => `${p1}${p2.padEnd(2, '0')}cl`)    // Ex: 1L5 -> 150cl
-    .replace(/(\d+)\s*l\b/g, (_, p1) => `${p1}00cl`)                               // Ex: 2L -> 200cl
-    .replace(/(\d+)[.,](\d+)\s*kg\b/g, (_, p1, p2) => `${p1}${p2.padEnd(3, '0')}g`) // Ex: 1.5kg -> 1500g
-    .replace(/(\d+)\s*kg\b/g, (_, p1) => `${p1}000g`)                               // Ex: 1kg -> 1000g
-    // 4. Nettoyage final : on garde lettres et chiffres
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
+  return String(str)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/œ/g, "oe")
+
+    // unités avancées
+    .replace(/(\d+)\s?x\s?(\d+)/g, "$1x$2")
+    .replace(/(\d+)[.,](\d+)\s*l\b/g, (_, a, b) => `${a}${b.padEnd(2, "0")}cl`)
+    .replace(/(\d+)\s*l\b/g, (_, a) => `${a}00cl`)
+    .replace(/(\d+)[.,](\d+)\s*kg\b/g, (_, a, b) => `${a}${b.padEnd(3, "0")}g`)
+    .replace(/(\d+)\s*kg\b/g, (_, a) => `${a}000g`)
+    .replace(/(\d+)\s*ml\b/g, (_, a) => `${Math.round(a / 10)}cl`)
+
+    // synonymes basiques (extensible)
+    .replace(/\boeufs?\b/g, "oeuf")
+    .replace(/\byaourts?\b/g, "yaourt")
+    .replace(/\bsodas?\b/g, "soda")
+
+    // nettoyage
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
-/**
- * Valide si un super-titre correspond à une recherche
- */
-function validateTitle(superTitre, query) {
-  if (!superTitre || !query) return false;
+// ---------------- EXTRACTION FEATURES ----------------
+function extractFeatures(text) {
+  const tokens = new Set(text.split(" ").filter(Boolean));
 
-  const normTitre = normalizeText(superTitre);
-  
-  // On découpe la recherche en mots (ex: ["gaufres", "x10", "600g"])
-  const keywords = normalizeText(query).split(' ').filter(k => k.length > 1);
-  if (keywords.length === 0) return false;
+  // quantité (g / cl)
+  let quantity = null;
+  const qMatch = text.match(/(\d+)(g|cl)\b/);
+  if (qMatch) quantity = parseInt(qMatch[1]);
 
-  // On compte combien de mots de la recherche sont trouvés dans le super-titre
-  const matchCount = keywords.filter(k => normTitre.includes(k)).length;
-  const matchRatio = matchCount / keywords.length;
+  // packs (6x33cl etc)
+  let pack = 1;
+  const pMatch = text.match(/(\d+)x(\d+)/);
+  if (pMatch) pack = parseInt(pMatch[1]);
 
-  // LE DÉTECTEUR DE MENSONGES : On affiche 60 caractères pour voir un peu plus de détails
-  console.log(`   ⚖️ [TEST IA] Cherche: "${query}" | Trouvé: "${String(superTitre).slice(0, 60).replace(/\n/g, ' ')}..." | Score: ${matchRatio.toFixed(2)}`);
-
-  // On valide à 50% : il faut que la majorité des mots (y compris les poids) correspondent
-  return matchRatio >= 0.50; 
+  return { tokens, quantity, pack };
 }
 
-/**
- * Normalise un prix renvoyé par l'IA en format français strict "X,YY"
- */
+// ---------------- SIMILARITÉ TEXTE ----------------
+function computeTextScore(queryTokens, titleTokens) {
+  let score = 0;
+
+  for (const q of queryTokens) {
+    if (titleTokens.has(q)) {
+      score += 1;
+    } else {
+      // match partiel (ex: coca dans cocacola)
+      for (const t of titleTokens) {
+        if (t.includes(q) || q.includes(t)) {
+          score += 0.6;
+          break;
+        }
+      }
+    }
+  }
+
+  return score / queryTokens.size;
+}
+
+// ---------------- PRIX ----------------
 function normalizePrice(raw) {
-  if (raw === null || raw === undefined) return null;
+  if (raw == null) return null;
 
-  let text = String(raw).toLowerCase()
-    .replace(/\s/g, '')      
-    .replace(/[€a-z]/g, '')  
-    .replace(',', '.');      
+  let text = String(raw)
+    .toLowerCase()
+    .replace(/\s/g, "")
+    .replace(/[€a-z]/g, "")
+    .replace(",", ".");
 
-  const parts = text.split('.');
+  const parts = text.split(".");
   if (parts.length > 2) {
     const decimals = parts.pop();
-    text = parts.join('') + '.' + decimals;
+    text = parts.join("") + "." + decimals;
   }
 
   const num = parseFloat(text);
-  if (isNaN(num)) return null;
-
-  return num.toFixed(2).replace('.', ',');
+  return Number.isFinite(num) ? Number(num.toFixed(2)) : null;
 }
 
-/**
- * Met en pause l'exécution
- */
+// ---------------- VALIDATION PRINCIPALE ----------------
+function validateTitle(superTitre, query, scrapedPrice = null, targetPrice = null) {
+  if (!superTitre || !query) return false;
+
+  const normTitle = normalizeText(superTitre);
+  const normQuery = normalizeText(query);
+
+  const titleFeatures = extractFeatures(normTitle);
+  const queryFeatures = extractFeatures(normQuery);
+
+  const textScore = computeTextScore(
+    queryFeatures.tokens,
+    titleFeatures.tokens
+  );
+
+  let score = textScore;
+
+  // ----- quantité (critique)
+  if (queryFeatures.quantity && titleFeatures.quantity) {
+    const diff =
+      Math.abs(queryFeatures.quantity - titleFeatures.quantity) /
+      queryFeatures.quantity;
+
+    if (diff <= 0.1) score += 0.3;
+    else if (diff <= 0.25) score += 0.15;
+    else score -= 0.3; // pénalité forte
+  }
+
+  // ----- pack
+  if (queryFeatures.pack !== titleFeatures.pack) {
+    score -= 0.2;
+  } else if (queryFeatures.pack > 1) {
+    score += 0.1;
+  }
+
+  // ----- prix
+  if (scrapedPrice != null && targetPrice != null) {
+    const p1 = normalizePrice(scrapedPrice);
+    const p2 = normalizePrice(targetPrice);
+
+    if (p1 && p2 && p2 !== 0) {
+      const diff = Math.abs(p1 - p2) / p2;
+
+      if (diff <= 0.05) score += 0.25;
+      else if (diff <= 0.20) score += 0.1;
+    }
+  }
+
+  // clamp
+  score = Math.max(0, Math.min(score, 1));
+
+  return score >= 0.50;
+}
+
+// ---------------- UTILS ----------------
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-/**
- * Relance une fonction asynchrone en cas d'échec
- */
 async function withRetry(fn, retries = 2, delayMs = 1500) {
+  let lastError;
+
   for (let i = 0; i <= retries; i++) {
     try {
       return await fn();
-    } catch (error) { 
-      if (i === retries) throw error; 
+    } catch (err) {
+      lastError = err;
+      if (i === retries) break;
       await sleep(delayMs * (i + 1));
     }
   }
+
+  throw lastError;
 }
 
-module.exports = { normalizeText, validateTitle, normalizePrice, sleep, withRetry };
+module.exports = {
+  normalizeText,
+  validateTitle,
+  normalizePrice,
+  sleep,
+  withRetry
+};
