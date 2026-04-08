@@ -33,34 +33,45 @@ const runComparator = async (imagePath) => {
   Object.keys(scrapers).forEach(n => totaux[n] = 0);
 
   for (const item of articles) {
-    if (!item.prix) continue;
-    const pTicket = parseFloat(item.prix.replace(',', '.'));
+    if (item.prix === null || item.prix === undefined) continue;
+    
+    const pTicket = parseFloat(String(item.prix).replace(',', '.'));
+    if (isNaN(pTicket)) continue;
+    
     totalOriginal += pTicket;
 
-    console.log(`\n🔎 Recherche : "${item.nom}" (${item.prix}€)`);
+    console.log(`\n🔎 Recherche : "${item.nom}" (${pTicket.toFixed(2)}€)`);
     const results = {};
 
     const promises = Object.entries(scrapers).map(async ([name, scraperFn]) => {
       try {
-        const res = await scraperFn(browser, item.nom);
+        // 🚀 MODIF : On envoie pTicket au scraper pour activer le bonus de score !
+        const res = await scraperFn(browser, item.nom, pTicket);
+        
         if (res && res.status === 'found') {
-          let pScraped = parseFloat(res.product.prix.replace(',', '.'));
+          let pScraped = parseFloat(String(res.product.prix).replace(',', '.'));
           
           // ⚖️ LOGIQUE POIDS
           const weightMatch = item.nom.match(/(\d+[.,]\d+)\s*kg/i);
           if (weightMatch && res.product.isKg) {
             const weight = parseFloat(weightMatch[1].replace(',', '.'));
             pScraped = pScraped * weight;
-            console.log(`       ⚖️ [POIDS] ${weight}kg x ${res.product.prix}€ = ${pScraped.toFixed(2)}€`);
           }
 
           const diff = Math.abs(pScraped - pTicket) / pTicket;
-          // On accepte si diff < 30% OU si score est parfait (>0.8) OU si c'est du poids
-          if (diff <= 0.35 || weightMatch || res.score >= 0.8) {
+          
+          // 🍎 MODIF : Tolérance spéciale pour le frais (Vrac/Légumes)
+          const isFrais = /(POIREAU|POIVRON|ORANGE|BANANE|VRAC|KG)/i.test(item.nom);
+          const maxAllowedDiff = isFrais ? 1.50 : 0.40;
+
+          if (diff <= maxAllowedDiff) {
             results[name] = { prix: pScraped, titre: res.product.titre };
+            console.log(`   ✅ [${name}] Trouvé: ${res.product.titre} à ${pScraped.toFixed(2)}€`);
           } else {
-            console.log(`   ⚠️ [${name}] Prix trop différent: ${pScraped.toFixed(2)}€`);
+            console.log(`   ⚠️ [${name}] Rejeté: Écart trop grand (${(diff*100).toFixed(0)}%)`);
           }
+        } else {
+            console.log(`   ❌ [${name}] Introuvable`);
         }
       } catch (e) { console.log(`   ❌ Erreur ${name}: ${e.message}`); }
     });
@@ -73,8 +84,10 @@ const runComparator = async (imagePath) => {
   }
 
   await browser.close();
-  console.log(`\nTOTAL TICKET: ${totalOriginal.toFixed(2)}€`);
+  console.log(`\n============================`);
+  console.log(`TOTAL TICKET: ${totalOriginal.toFixed(2)}€`);
   Object.entries(totaux).forEach(([m, t]) => console.log(`${m.toUpperCase()}: ${t.toFixed(2)}€`));
+  console.log(`============================\n`);
 };
 
 runComparator(path.join(__dirname, 'ticket.jpg'));
