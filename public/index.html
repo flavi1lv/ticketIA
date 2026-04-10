@@ -2,15 +2,16 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <title>Scan&Save</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scan&Save - Comparateur de prix</title>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
-<body style="font-family: Arial, sans-serif; text-align: center; margin-top: 50px; background-color: #f4f4f9;">
+<body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; margin-top: 50px; background-color: #f4f4f9; color: #333;">
     
     <h1>🛒 Scan&Save</h1>
-    <p>Connectez-vous pour comparer vos tickets !</p>
+    <p>La solution intelligente pour comparer vos tickets de caisse.</p>
 
-    <div id="auth-block">
+    <div id="auth-block" style="margin-bottom: 20px;">
         <div id="g_id_onload"
              data-client_id="239338171655-hm0ru2n35k46j2m5et58tfuq4c82vrmm.apps.googleusercontent.com"
              data-callback="handleCredentialResponse"
@@ -20,45 +21,97 @@
         <div class="g_id_signin" data-type="standard" data-shape="pill"></div>
     </div>
 
-    <div id="scan-block" style="display: none; border: 1px solid #ccc; padding: 20px; border-radius: 10px; display: inline-block; background: white;">
-        <h3 id="user-name"></h3>
-        <button id="btn-scan" style="padding: 12px 25px; font-size: 16px; cursor: pointer; background-color: #4285F4; color: white; border: none; border-radius: 5px;">
+    <div id="scan-block" style="display: none; border: 1px solid #ddd; padding: 30px; border-radius: 15px; display: inline-block; background: white; box-shadow: 0 4px 6px rgba(0,0,0,0.1); min-width: 400px;">
+        <h3 id="user-name" style="color: #4285F4; margin-bottom: 10px;"></h3>
+        
+        <button id="btn-logout" style="margin-bottom: 20px; padding: 6px 12px; background: none; border: 1px solid #ea4335; color: #ea4335; border-radius: 20px; cursor: pointer; font-size: 13px; font-weight: 500;">
+            Se déconnecter
+        </button>
+
+        <p>Sélectionnez une photo de votre ticket :</p>
+        
+        <input type="file" id="ticket-file" accept="image/*" style="display: block; margin: 20px auto; padding: 10px; border: 1px dashed #bbb; border-radius: 5px; width: 90%;">
+        
+        <button id="btn-scan" style="padding: 15px 30px; font-size: 16px; cursor: pointer; background-color: #4285F4; color: white; border: none; border-radius: 8px; font-weight: bold;">
             🔍 Lancer l'analyse du ticket
         </button>
     </div>
 
-    <div id="resultat" style="margin-top: 20px; font-weight: bold; color: #2e7d32;"></div>
+    <div id="resultat" style="margin-top: 30px; padding: 20px; font-weight: bold; min-height: 50px;"></div>
 
     <script>
+        // 1. Gérer la connexion
         async function handleCredentialResponse(response) {
-            console.log("Token reçu !");
-            
-            const res = await fetch('/api/auth/google', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ token: response.credential })
-            });
+            try {
+                const res = await fetch('/api/auth/google', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: response.credential })
+                });
 
-            if (res.ok) {
-                const user = await res.json();
-                document.getElementById('auth-block').style.display = 'none';
-                document.getElementById('scan-block').style.display = 'block';
-                document.getElementById('user-name').innerText = "Bonjour " + user.name + " !";
-            } else {
-                alert("Erreur serveur lors de l'auth");
+                if (res.ok) {
+                    const user = await res.json();
+                    document.getElementById('auth-block').style.display = 'none';
+                    document.getElementById('scan-block').style.display = 'block';
+                    document.getElementById('user-name').innerText = "Bonjour " + user.name + " ! 👋";
+                }
+            } catch (err) {
+                console.error("Erreur Auth:", err);
             }
         }
 
+        // 2. NOUVEAU : Gérer la déconnexion
+        document.getElementById('btn-logout').addEventListener('click', () => {
+            // On cache le bloc de scan et on réaffiche le bouton Google
+            document.getElementById('scan-block').style.display = 'none';
+            document.getElementById('auth-block').style.display = 'block';
+            document.getElementById('resultat').innerHTML = ""; // On efface les anciens résultats
+            
+            // On réinitialise l'input file pour le prochain scan
+            document.getElementById('ticket-file').value = "";
+            
+            console.log("Utilisateur déconnecté.");
+        });
+
+        // 3. Gérer le scan
         document.getElementById('btn-scan').addEventListener('click', async () => {
             const resDiv = document.getElementById('resultat');
-            resDiv.innerText = "⏳ Analyse en cours...";
+            const fileInput = document.getElementById('ticket-file');
             
+            if (fileInput.files.length === 0) {
+                resDiv.style.color = "red";
+                resDiv.innerText = "⚠️ Veuillez d'abord choisir une photo de ticket.";
+                return;
+            }
+
+            resDiv.style.color = "#4285F4";
+            resDiv.innerText = "⏳ Analyse par l'IA en cours... Merci de patienter.";
+            
+            const formData = new FormData();
+            formData.append('ticket', fileInput.files[0]);
+
             try {
-                const reponse = await fetch('/api/comparer-ticket', { method: 'POST' });
+                const reponse = await fetch('/api/comparer-ticket', { 
+                    method: 'POST',
+                    body: formData 
+                });
+                
                 const data = await reponse.json();
-                resDiv.innerHTML = `🏆 Gagnant : ${data.enseigneGagnante} (${data.prixTotal} €)`;
+                
+                if (reponse.ok) {
+                    resDiv.style.color = "#2e7d32";
+                    resDiv.innerHTML = `
+                        <div style="border-top: 2px solid #eee; padding-top: 10px;">
+                            <p>🏆 Magasin : ${data.enseigneGagnante} | Total : ${data.prixTotal} €</p>
+                            <p style="font-size: 0.8em; font-weight: normal; background: #fff; padding: 10px; border-radius: 5px; border: 1px solid #eee;">
+                                <i>"${data.extrait}..."</i>
+                            </p>
+                        </div>
+                    `;
+                }
             } catch (err) {
-                resDiv.innerText = "❌ Erreur.";
+                resDiv.style.color = "red";
+                resDiv.innerText = "❌ Erreur de connexion au serveur.";
             }
         });
     </script>
