@@ -1,25 +1,49 @@
+require('dotenv').config();
 const express = require('express');
+const { OAuth2Client } = require('google-auth-library');
+
 const app = express();
 const port = 3000;
 
-// On sert le dossier "public" pour afficher le site web
+// Utilisation de la clé stockée dans le fichier .env
+const CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const client = new OAuth2Client(CLIENT_ID);
+
 app.use(express.static('public'));
 app.use(express.json()); 
 
-// L'API que le site web va appeler
-app.post('/api/comparer-ticket', async (req, res) => {
-    console.log("📥 Le site web a cliqué sur le bouton !");
+// --- ROUTE AUTHENTIFICATION ---
+app.post('/api/auth/google', async (req, res) => {
+    const { token } = req.body;
     
-    // PLUS TARD : Ici, on appellera ta fonction "scrapeCarrefour" qui est dans scraper.js
+    // Ce log s'affichera quand Google t'enverra le jeton
+    console.log("🛠 Tentative de connexion reçue..."); 
     
-    // Pour l'instant on renvoie des fausses données pour que l'Étudiant A puisse coder le site
-    res.json({
-        enseigneGagnante: "Carrefour",
-        prixTotal: 45.20,
-        message: "Analyse réussie !"
-    });
+    try {
+        const ticket = await client.verifyIdToken({
+            idToken: token,
+            audience: CLIENT_ID,
+        });
+        const payload = ticket.getPayload();
+        
+        // CE LOG EST LE PLUS IMPORTANT : il confirme que ça marche !
+        console.log(`✅ Utilisateur authentifié : ${payload.name} (${payload.email})`);
+        
+        res.json({ name: payload.name });
+    } catch (error) {
+        console.error("❌ Erreur de vérification :", error.message);
+        res.status(401).json({ error: "Authentification échouée" });
+    }
+});
+
+// --- ROUTE SCAN ---
+app.post('/api/comparer-ticket', (req, res) => {
+    console.log("🔍 Bouton scan cliqué !");
+    res.json({ enseigneGagnante: "Carrefour", prixTotal: 45.20 });
 });
 
 app.listen(port, () => {
-  console.log(`✅ Serveur Web démarré ! Ouvre ton navigateur sur http://localhost:${port}`);
+  console.log(`🚀 Serveur démarré sur http://localhost:${port}`);
+  // Ce log vérifie que ton fichier .env est bien lu
+  console.log(`🔑 Clé Google chargée : ${CLIENT_ID ? "OUI (OK)" : "NON (ERREUR .ENV)"}`);
 });

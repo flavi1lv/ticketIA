@@ -3,30 +3,63 @@
 <head>
     <meta charset="UTF-8">
     <title>Scan&Save</title>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
-<body style="font-family: Arial, sans-serif; text-align: center; margin-top: 50px;">
+<body style="font-family: Arial, sans-serif; text-align: center; margin-top: 50px; background-color: #f4f4f9;">
+    
     <h1>🛒 Scan&Save</h1>
-    <p>La chasse aux prix est ouverte !</p>
-    
-    <button id="btn-scan" style="padding: 10px 20px; font-size: 16px; cursor: pointer;">
-        Lancer l'analyse du ticket
-    </button>
-    
-    <div id="resultat" style="margin-top: 20px; font-weight: bold; color: green;"></div>
+    <p>Connectez-vous pour comparer vos tickets !</p>
+
+    <div id="auth-block">
+        <div id="g_id_onload"
+             data-client_id="239338171655-hm0ru2n35k46j2m5et58tfuq4c82vrmm.apps.googleusercontent.com"
+             data-callback="handleCredentialResponse"
+             data-auto_select="false"
+             data-itp_support="true">
+        </div>
+        <div class="g_id_signin" data-type="standard" data-shape="pill"></div>
+    </div>
+
+    <div id="scan-block" style="display: none; border: 1px solid #ccc; padding: 20px; border-radius: 10px; display: inline-block; background: white;">
+        <h3 id="user-name"></h3>
+        <button id="btn-scan" style="padding: 12px 25px; font-size: 16px; cursor: pointer; background-color: #4285F4; color: white; border: none; border-radius: 5px;">
+            🔍 Lancer l'analyse du ticket
+        </button>
+    </div>
+
+    <div id="resultat" style="margin-top: 20px; font-weight: bold; color: #2e7d32;"></div>
 
     <script>
+        async function handleCredentialResponse(response) {
+            console.log("Token reçu !");
+            
+            const res = await fetch('/api/auth/google', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: response.credential })
+            });
+
+            if (res.ok) {
+                const user = await res.json();
+                document.getElementById('auth-block').style.display = 'none';
+                document.getElementById('scan-block').style.display = 'block';
+                document.getElementById('user-name').innerText = "Bonjour " + user.name + " !";
+            } else {
+                alert("Erreur serveur lors de l'auth");
+            }
+        }
+
         document.getElementById('btn-scan').addEventListener('click', async () => {
-            document.getElementById('resultat').innerText = "⏳ Recherche en cours (simulation)...";
+            const resDiv = document.getElementById('resultat');
+            resDiv.innerText = "⏳ Analyse en cours...";
             
-            // On appelle le serveur
-            const reponse = await fetch('/api/comparer-ticket', { method: 'POST' });
-            const data = await reponse.json();
-            
-            // On affiche le résultat
-            document.getElementById('resultat').innerHTML = `
-                🏆 L'enseigne la moins chère : ${data.enseigneGagnante} <br>
-                💶 Prix de votre panier : ${data.prixTotal} €
-            `;
+            try {
+                const reponse = await fetch('/api/comparer-ticket', { method: 'POST' });
+                const data = await reponse.json();
+                resDiv.innerHTML = `🏆 Gagnant : ${data.enseigneGagnante} (${data.prixTotal} €)`;
+            } catch (err) {
+                resDiv.innerText = "❌ Erreur.";
+            }
         });
     </script>
 </body>
