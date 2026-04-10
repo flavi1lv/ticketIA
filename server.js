@@ -20,7 +20,11 @@ const User = mongoose.model('User', new mongoose.Schema({
     googleId: String,
     name: String,
     email: String,
-    history: [{ date: { type: Date, default: Date.now }, store: String, total: Number }]
+    history: [{ 
+        date: { type: Date, default: Date.now }, 
+        store: String, 
+        total: Number 
+    }]
 }));
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -52,17 +56,22 @@ app.post('/api/auth/google', async (req, res) => {
             console.log("🏠 Utilisateur reconnu :", user.name);
         }
 
+        // On renvoie le googleId pour que le Front-end puisse l'utiliser lors du scan
         res.json({ name: user.name, googleId: user.googleId });
     } catch (error) {
+        console.error("Erreur Auth:", error);
         res.status(401).send("Erreur d'authentification");
     }
 });
 
-// 2. Scan et Analyse du ticket
+// 2. Scan et Analyse du ticket + Sauvegarde en Base
 app.post('/api/comparer-ticket', upload.single('ticket'), async (req, res) => {
     try {
         if (!req.file) return res.status(400).send("Pas de fichier.");
         
+        // On récupère l'ID utilisateur envoyé depuis le front (optionnel mais recommandé)
+        const userId = req.body.googleId; 
+
         console.log("📸 Analyse du ticket en cours...");
         const { data: { text } } = await Tesseract.recognize(req.file.path, 'fra');
         fs.unlinkSync(req.file.path); 
@@ -76,7 +85,7 @@ app.post('/api/comparer-ticket', upload.single('ticket'), async (req, res) => {
         else if (texteMin.includes("auchan")) enseigne = "Auchan";
         else if (texteMin.includes("lidl")) enseigne = "Lidl";
 
-        // Extraction Prix (Filtre intelligent)
+        // Extraction Prix
         const regexPrix = /(\d+[\s.,]\d{2})/g;
         const montantsTrouves = text.match(regexPrix);
         let total = 0;
@@ -85,6 +94,16 @@ app.post('/api/comparer-ticket', upload.single('ticket'), async (req, res) => {
                 .map(p => parseFloat(p.replace(',', '.')))
                 .filter(p => p < 500); 
             if (prixNumeriques.length > 0) total = Math.max(...prixNumeriques);
+        }
+
+        // --- SAUVEGARDE DANS LA BASE DE DONNÉES ---
+        // On ajoute ce scan à l'historique de l'utilisateur
+        if (userId) {
+            await User.findOneAndUpdate(
+                { googleId: userId },
+                { $push: { history: { store: enseigne, total: total } } }
+            );
+            console.log(`💾 Ticket sauvegardé dans l'historique de l'utilisateur !`);
         }
 
         console.log(`✅ Résultat trouvé -> Enseigne: ${enseigne}, Total: ${total}€`);
@@ -97,8 +116,8 @@ app.post('/api/comparer-ticket', upload.single('ticket'), async (req, res) => {
         });
 
     } catch (error) {
-        console.error(error);
-        res.status(500).send("Erreur lors de la lecture.");
+        console.error("Erreur Serveur:", error);
+        res.status(500).send("Erreur lors de l'analyse.");
     }
 });
 

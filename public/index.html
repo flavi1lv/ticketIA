@@ -40,6 +40,9 @@
     <div id="resultat" style="margin-top: 30px; padding: 20px; font-weight: bold; min-height: 50px;"></div>
 
     <script>
+        // VARIABLE GLOBALE POUR L'UTILISATEUR
+        let currentUserId = null;
+
         // 1. Gérer la connexion
         async function handleCredentialResponse(response) {
             try {
@@ -51,6 +54,10 @@
 
                 if (res.ok) {
                     const user = await res.json();
+                    
+                    // ON GARDE L'ID DANS LA VARIABLE
+                    currentUserId = user.googleId; 
+                    
                     document.getElementById('auth-block').style.display = 'none';
                     document.getElementById('scan-block').style.display = 'block';
                     document.getElementById('user-name').innerText = "Bonjour " + user.name + " ! 👋";
@@ -60,16 +67,15 @@
             }
         }
 
-        // 2. NOUVEAU : Gérer la déconnexion
+        // 2. Gérer la déconnexion
         document.getElementById('btn-logout').addEventListener('click', () => {
-            // On cache le bloc de scan et on réaffiche le bouton Google
             document.getElementById('scan-block').style.display = 'none';
             document.getElementById('auth-block').style.display = 'block';
-            document.getElementById('resultat').innerHTML = ""; // On efface les anciens résultats
-            
-            // On réinitialise l'input file pour le prochain scan
+            document.getElementById('resultat').innerHTML = "";
             document.getElementById('ticket-file').value = "";
             
+            // ON RÉINITIALISE L'ID
+            currentUserId = null; 
             console.log("Utilisateur déconnecté.");
         });
 
@@ -85,10 +91,13 @@
             }
 
             resDiv.style.color = "#4285F4";
-            resDiv.innerText = "⏳ Analyse par l'IA en cours... Merci de patienter.";
+            resDiv.innerText = "⏳ Analyse et sauvegarde en cours...";
             
             const formData = new FormData();
             formData.append('ticket', fileInput.files[0]);
+            
+            // ON AJOUTE L'ID DE L'UTILISATEUR DANS L'ENVOI
+            formData.append('googleId', currentUserId); 
 
             try {
                 const reponse = await fetch('/api/comparer-ticket', { 
@@ -103,8 +112,8 @@
                     resDiv.innerHTML = `
                         <div style="border-top: 2px solid #eee; padding-top: 10px;">
                             <p>🏆 Magasin : ${data.enseigneGagnante} | Total : ${data.prixTotal} €</p>
-                            <p style="font-size: 0.8em; font-weight: normal; background: #fff; padding: 10px; border-radius: 5px; border: 1px solid #eee;">
-                                <i>"${data.extrait}..."</i>
+                            <p style="color: grey; font-size: 0.8em; font-weight: normal;">
+                                💾 Sauvegardé automatiquement dans votre historique !
                             </p>
                         </div>
                     `;
