@@ -7,7 +7,9 @@ function normalizeText(str) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/œ/g, "oe")
-
+    // Suppression des mots de liaison inutiles pour la comparaison
+    .replace(/\b(de|du|des|le|la|les|au|aux|un|une)\b/g, " ")
+    
     // unités avancées
     .replace(/(\d+)\s?x\s?(\d+)/g, "$1x$2")
     .replace(/(\d+)[.,](\d+)\s*l\b/g, (_, a, b) => `${a}${b.padEnd(2, "0")}cl`)
@@ -16,10 +18,11 @@ function normalizeText(str) {
     .replace(/(\d+)\s*kg\b/g, (_, a) => `${a}000g`)
     .replace(/(\d+)\s*ml\b/g, (_, a) => `${Math.round(a / 10)}cl`)
 
-    // synonymes basiques (extensible)
+    // synonymes / Marques propres
     .replace(/\boeufs?\b/g, "oeuf")
     .replace(/\byaourts?\b/g, "yaourt")
-    .replace(/\bsodas?\b/g, "soda")
+    .replace(/\bmarque repere\b/g, "") // On ignore la marque distributeur Leclerc
+    .replace(/\bbio village\b/g, "bio")
 
     // nettoyage
     .replace(/[^a-z0-9\s]/g, " ")
@@ -29,14 +32,12 @@ function normalizeText(str) {
 
 // ---------------- EXTRACTION FEATURES ----------------
 function extractFeatures(text) {
-  const tokens = new Set(text.split(" ").filter(Boolean));
+  const tokens = new Set(text.split(" ").filter(t => t.length > 1)); // On ignore les lettres isolées
 
-  // quantité (g / cl)
   let quantity = null;
   const qMatch = text.match(/(\d+)(g|cl)\b/);
   if (qMatch) quantity = parseInt(qMatch[1]);
 
-  // packs (6x33cl etc)
   let pack = 1;
   const pMatch = text.match(/(\d+)x(\d+)/);
   if (pMatch) pack = parseInt(pMatch[1]);
@@ -46,28 +47,28 @@ function extractFeatures(text) {
 
 // ---------------- SIMILARITÉ TEXTE ----------------
 function computeTextScore(queryTokens, titleTokens) {
-  let score = 0;
+  if (queryTokens.size === 0) return 0;
+  let matches = 0;
 
   for (const q of queryTokens) {
     if (titleTokens.has(q)) {
-      score += 1;
+      matches += 1;
     } else {
-      // match partiel (ex: coca dans cocacola)
       for (const t of titleTokens) {
         if (t.includes(q) || q.includes(t)) {
-          score += 0.6;
+          matches += 0.7; // Match partiel boosté à 0.7
           break;
         }
       }
     }
   }
 
-  return score / queryTokens.size;
+  return matches / queryTokens.size;
 }
 
 // ---------------- PRIX ----------------
 function normalizePrice(raw) {
-  if (raw == null) return null;
+  if (raw == null || raw === "") return null;
 
   let text = String(raw)
     .toLowerCase()
@@ -102,49 +103,40 @@ function validateTitle(superTitre, query, scrapedPrice = null, targetPrice = nul
 
   let score = textScore;
 
-  // ----- quantité (critique)
+  // ----- Poids/Volume (Crucial chez Leclerc)
   if (queryFeatures.quantity && titleFeatures.quantity) {
-    const diff =
-      Math.abs(queryFeatures.quantity - titleFeatures.quantity) /
-      queryFeatures.quantity;
-
-    if (diff <= 0.1) score += 0.3;
-    else if (diff <= 0.25) score += 0.15;
-    else score -= 0.3; // pénalité forte
+    const diff = Math.abs(queryFeatures.quantity - titleFeatures.quantity) / queryFeatures.quantity;
+    if (diff <= 0.05) score += 0.35; // Très proche
+    else if (diff <= 0.20) score += 0.15;
+    else score -= 0.4; // Pénalité si format différent (ex: 500g vs 1kg)
   }
 
-  // ----- pack
+  // ----- Packs
   if (queryFeatures.pack !== titleFeatures.pack) {
-    score -= 0.2;
-  } else if (queryFeatures.pack > 1) {
-    score += 0.1;
+    score -= 0.25;
   }
 
-  // ----- prix
+  // ----- Comparaison de prix (Le bonus "Adem")
+  // Si le prix trouvé est très proche du prix ticket, on valide presque à coup sûr
   if (scrapedPrice != null && targetPrice != null) {
-    const p1 = normalizePrice(scrapedPrice);
-    const p2 = normalizePrice(targetPrice);
+    const pScraped = typeof scrapedPrice === 'number' ? scrapedPrice : normalizePrice(scrapedPrice);
+    const pTarget = typeof targetPrice === 'number' ? targetPrice : normalizePrice(targetPrice);
 
-    if (p1 && p2 && p2 !== 0) {
-      const diff = Math.abs(p1 - p2) / p2;
-
-      if (diff <= 0.05) score += 0.25;
-      else if (diff <= 0.20) score += 0.1;
+    if (pScraped && pTarget) {
+      const diffPrix = Math.abs(pScraped - pTarget) / pTarget;
+      if (diffPrix <= 0.03) score += 0.4; // Prix quasi identique = gros bonus
+      else if (diffPrix <= 0.15) score += 0.2;
     }
   }
 
-  // clamp
-  score = Math.max(0, Math.min(score, 1));
-
-  return score >= 0.50;
+  // Seuil de validation
+  return score >= 0.55; 
 }
 
-// ---------------- UTILS ----------------
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 async function withRetry(fn, retries = 2, delayMs = 1500) {
   let lastError;
-
   for (let i = 0; i <= retries; i++) {
     try {
       return await fn();
@@ -154,7 +146,6 @@ async function withRetry(fn, retries = 2, delayMs = 1500) {
       await sleep(delayMs * (i + 1));
     }
   }
-
   throw lastError;
 }
 
