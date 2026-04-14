@@ -5,7 +5,10 @@ const path = require('path');
 const fs = require('fs');
 const { scanReceipt } = require('./utils/scanner');
 
-const IGNORED_SCRAPERS = ['carrefour.js']; 
+const IGNORED_SCRAPERS = ['leclerc.js'];
+
+// Tolérance de 25% sur l'écart de prix
+const MATCH_THRESHOLD = 0.25; 
 
 const loadScrapers = () => {
   const scrapersDir = path.join(__dirname, 'scrapers');
@@ -26,53 +29,38 @@ const runComparator = async (imagePath) => {
   if (!articles.length) return;
 
   console.table(articles);
-  // On lance en headless: true pour la rapidité
-  const browser = await chromium.launch({ headless: false });
+  const browser = await chromium.launch({ headless: true });
 
   let totalOriginal = 0;
   const totaux = {};
   Object.keys(scrapers).forEach(n => totaux[n] = 0);
 
   for (const item of articles) {
-    if (item.prix === null || item.prix === undefined) continue;
+    if (item.prix_total === null || item.prix_total === undefined) continue;
     
-    const pTicket = parseFloat(String(item.prix).replace(',', '.'));
+    const pTicket = parseFloat(String(item.prix_total).replace(',', '.'));
     if (isNaN(pTicket)) continue;
     
     totalOriginal += pTicket;
 
-    console.log(`\n🔎 Recherche : "${item.nom}" (${pTicket.toFixed(2)}€)`);
+    console.log(`\n🔎 Recherche : "${item.recherche_optimisee}" (${pTicket.toFixed(2)}€)`);
     const results = {};
 
     const promises = Object.entries(scrapers).map(async ([name, scraperFn]) => {
       try {
-        const res = await scraperFn(browser, item.nom, pTicket);
+        const res = await scraperFn(browser, item, pTicket);
         
         if (res && res.status === 'found') {
           let pScraped = parseFloat(String(res.product.prix).replace(',', '.'));
           
-          // ⚖️ LOGIQUE POIDS (KG)
-          const weightMatch = item.nom.match(/(\d+[.,]\d+)\s*kg/i);
-          if (weightMatch && res.product.isKg) {
-            const weight = parseFloat(weightMatch[1].replace(',', '.'));
-            pScraped = pScraped * weight;
-          }
-
           // 🎯 CALCUL DE L'ÉCART
           const diff = Math.abs(pScraped - pTicket) / pTicket;
           
-          // 🍎 TOLÉRANCE ÉLARGIE
-          // On accepte une différence de 80% pour le vrac/frais et 50% pour le reste
-          // car les prix Leclerc/Carrefour varient beaucoup.
-          const isFrais = /(POIREAU|POIVRON|ORANGE|BANANE|VRAC|KG|LÉGUME)/i.test(item.nom);
-          const maxAllowedDiff = isFrais ? 0.80 : 0.50;
-
-          if (diff <= maxAllowedDiff || name === 'leclerc') { 
-            // 💡 FORCE LECLERC : Si le scraper Leclerc dit "found", on lui fait confiance
+          if (diff <= MATCH_THRESHOLD) { 
             results[name] = { prix: pScraped, titre: res.product.titre };
-            console.log(`   ✅ [${name}] Trouvé: ${res.product.titre} à ${pScraped.toFixed(2)}€`);
+            console.log(`   ✅ [${name}] Validé: ${res.product.titre} à ${pScraped.toFixed(2)}€`);
           } else {
-            console.log(`   ⚠️ [${name}] Rejeté: Écart de prix trop grand (${(diff*100).toFixed(0)}%)`);
+            console.log(`   ⚠️ [${name}] Rejeté: Écart de prix (${(diff*100).toFixed(1)}%). Trouvé à ${pScraped.toFixed(2)}€`);
           }
         } else {
             console.log(`   ❌ [${name}] Introuvable sur le site`);
@@ -82,7 +70,7 @@ const runComparator = async (imagePath) => {
 
     await Promise.all(promises);
 
-    // Si on n'a rien trouvé, on garde le prix du ticket pour ne pas fausser le total
+    // Si on n'a rien trouvé, on garde le prix du ticket
     Object.keys(scrapers).forEach(n => {
       totaux[n] += results[n] ? results[n].prix : pTicket;
     });
