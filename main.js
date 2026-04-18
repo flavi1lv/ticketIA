@@ -5,10 +5,10 @@ const path = require('path');
 const fs = require('fs');
 const { scanReceipt } = require('./utils/scanner');
 
-const IGNORED_SCRAPERS = ['leclerc.js'];
+const IGNORED_SCRAPERS = ['carrefour.js']; 
 
-// Tolérance de 25% sur l'écart de prix
-const MATCH_THRESHOLD = 0.25; 
+// Tolérance de 40% pour s'adapter aux écarts de prix entre enseignes
+const MATCH_THRESHOLD = 0.40; 
 
 const loadScrapers = () => {
   const scrapersDir = path.join(__dirname, 'scrapers');
@@ -29,7 +29,18 @@ const runComparator = async (imagePath) => {
   if (!articles.length) return;
 
   console.table(articles);
-  const browser = await chromium.launch({ headless: true });
+
+  // 🚀 OPTIMISATION : On ne lance Chromium QUE si un scraper en a besoin 
+  // Monoprix utilise fetch (API), donc il n'en a pas besoin.
+  let browser = null;
+  const scrapersRequiringBrowser = Object.keys(scrapers).filter(name => name !== 'monoprix');
+  
+  if (scrapersRequiringBrowser.length > 0) {
+    console.log(`🌐 Lancement du navigateur pour : ${scrapersRequiringBrowser.join(', ')}...`);
+    browser = await chromium.launch({ headless: true });
+  } else {
+    console.log("⚡ Mode API Directe (Aucun navigateur lancé)");
+  }
 
   let totalOriginal = 0;
   const totaux = {};
@@ -42,41 +53,39 @@ const runComparator = async (imagePath) => {
     if (isNaN(pTicket)) continue;
     
     totalOriginal += pTicket;
-
     console.log(`\n🔎 Recherche : "${item.recherche_optimisee}" (${pTicket.toFixed(2)}€)`);
-    const results = {};
 
+    const results = {};
     const promises = Object.entries(scrapers).map(async ([name, scraperFn]) => {
       try {
         const res = await scraperFn(browser, item, pTicket);
         
         if (res && res.status === 'found') {
-          let pScraped = parseFloat(String(res.product.prix).replace(',', '.'));
-          
-          // 🎯 CALCUL DE L'ÉCART
+          const pScraped = res.product.prix;
           const diff = Math.abs(pScraped - pTicket) / pTicket;
           
           if (diff <= MATCH_THRESHOLD) { 
             results[name] = { prix: pScraped, titre: res.product.titre };
             console.log(`   ✅ [${name}] Validé: ${res.product.titre} à ${pScraped.toFixed(2)}€`);
           } else {
-            console.log(`   ⚠️ [${name}] Rejeté: Écart de prix (${(diff*100).toFixed(1)}%). Trouvé à ${pScraped.toFixed(2)}€`);
+            console.log(`   ⚠️ [${name}] Rejeté: Écart trop grand (${(diff*100).toFixed(1)}%). Trouvé à ${pScraped.toFixed(2)}€`);
           }
         } else {
-            console.log(`   ❌ [${name}] Introuvable sur le site`);
+            console.log(`   ❌ [${name}] Introuvable`);
         }
       } catch (e) { console.log(`   ❌ Erreur ${name}: ${e.message}`); }
     });
 
     await Promise.all(promises);
 
-    // Si on n'a rien trouvé, on garde le prix du ticket
+    // Si on n'a rien trouvé, on prend le prix du ticket par défaut
     Object.keys(scrapers).forEach(n => {
       totaux[n] += results[n] ? results[n].prix : pTicket;
     });
   }
 
-  await browser.close();
+  if (browser) await browser.close();
+
   console.log(`\n============================`);
   console.log(`TOTAL TICKET ORIGINE: ${totalOriginal.toFixed(2)}€`);
   Object.entries(totaux).forEach(([m, t]) => {
