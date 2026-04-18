@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const { scanReceipt } = require('./utils/scanner');
 
-const IGNORED_SCRAPERS = ['carrefour.js']; 
+const IGNORED_SCRAPERS = []; //['carrefour.js']; 
 
 // Tolérance de 40% pour s'adapter aux écarts de prix entre enseignes
 const MATCH_THRESHOLD = 0.40; 
