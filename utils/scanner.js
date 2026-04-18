@@ -9,22 +9,20 @@ const filterCancellations = (articles) => {
   const result = [];
   
   for (const item of articles) {
-    // Support de la nouvelle clé prix_total ou de l'ancienne clé prix
     const priceValue = item.prix_total !== undefined 
       ? item.prix_total 
       : parseFloat(String(item.prix || "0").replace(',', '.'));
 
     if (priceValue < 0) {
-      // On cherche le dernier article ajouté qui a le même prix en positif
       const cancelIndex = result.findLastIndex(a => {
         const aPrice = a.prix_total !== undefined 
           ? a.prix_total 
           : parseFloat(String(a.prix).replace(',', '.'));
-        return Math.abs(aPrice + priceValue) < 0.01; // Évite les bugs de décimales JS
+        return Math.abs(aPrice + priceValue) < 0.01;
       });
       
       if (cancelIndex !== -1) {
-        result.splice(cancelIndex, 1); // On retire l'article d'origine
+        result.splice(cancelIndex, 1);
       }
     } else if (priceValue > 0) {
       result.push(item);
@@ -60,7 +58,6 @@ const scanReceipt = async (imagePath) => {
 
     let responseText = "";
 
-    // 🚀 ROUTE 1 : GROQ
     if (AI_PROVIDER === 'groq') {
       const base64Image = Buffer.from(fs.readFileSync(imagePath)).toString("base64");
       const imageUrl = `data:image/jpeg;base64,${base64Image}`;
@@ -72,7 +69,7 @@ const scanReceipt = async (imagePath) => {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: "meta-llama/llama-4-scout-17b-16e-instruct", // TON MODELE CORRECT
+          model: "meta-llama/llama-4-scout-17b-16e-instruct", 
           messages: [
             {
               role: "user",
@@ -90,9 +87,7 @@ const scanReceipt = async (imagePath) => {
       const data = await response.json();
       if (data.error) throw new Error(data.error.message);
       responseText = data.choices[0].message.content;
-    }
-    
-    // 🐢 ROUTE 2 : OLLAMA
+    } 
     else if (AI_PROVIDER === 'ollama') {
       const base64Image = Buffer.from(fs.readFileSync(imagePath)).toString("base64");
 
@@ -109,22 +104,15 @@ const scanReceipt = async (imagePath) => {
       });
       
       const data = await response.json();
-      if (data.error) throw new Error(data.error);
       responseText = data.response;
     }
 
-    // 🛡️ NETTOYAGE ANTI-MARKDOWN & PARSING SÉCURISÉ
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error("Format JSON introuvable dans la réponse.");
+    if (!jsonMatch) throw new Error("Format JSON introuvable.");
     
     const result = JSON.parse(jsonMatch[0]);
-
-    const rawArticles = result.articles || [];
+    const cleanedArticles = filterCancellations(result.articles || []);
     
-    // On passe le balai sur les annulations/erreurs de caisse
-    const cleanedArticles = filterCancellations(rawArticles);
-    
-    // 🌉 PONT DE COMPATIBILITÉ & FORMATAGE POUR LE RETOUR
     return cleanedArticles.map(a => ({
       nom_brut: a.nom_brut,
       recherche_optimisee: (a.recherche_optimisee || a.nom || "INCONNU").toUpperCase(),
