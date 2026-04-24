@@ -88,12 +88,12 @@ const scrapeMonoprix = async (browser, article, targetPrice) => {
         return { titre: titreOrig, rawFormat, finalPrice, score, diff, qtyOk };
       })
       .filter(p =>
-        p.finalPrice               &&
-        p.score >= SCORE_THRESHOLD  &&
-        p.diff  <= PRICE_DIFF_THRESHOLD &&
+        p.finalPrice              &&
+        p.score >= SCORE_THRESHOLD &&
+        p.diff  <= 2.0             &&
         p.qtyOk
       )
-      .sort((a, b) => a.diff - b.diff || b.score - a.score);
+      .sort((a, b) => b.score - a.score || a.diff - b.diff);
 
     if (!candidates.length) {
       const debugInfo = products.slice(0, 10).map(p => {

@@ -30,6 +30,10 @@ function normalizePrice(raw) {
   return Number.isFinite(num) ? Number(num.toFixed(2)) : null;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// UTILITAIRES ASYNC
+// ─────────────────────────────────────────────────────────────────────────────
+
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 /**
@@ -84,7 +88,9 @@ const tokenize = str => {
  * ex: "600g", "x10", "1.25l", "1kg", "30", "135g"
  */
 const isQuantityToken = w =>
-  /^\d+(\.\d+)?(g|kg|ml|l|cl|x\d*)?$/.test(w) || /^x\d+$/.test(w);
+  /^\d+(\.\d+)?(g|kg|ml|l|cl|x\d*)?$/.test(w) ||
+  /^x\d+$/.test(w) ||
+  /^\d+x\d+[a-z]*$/.test(w); // tokens composés : "7x45g", "6x33cl"
 
 /**
  * Score sémantique 0→1.
@@ -110,12 +116,6 @@ const extractQuantityTokens = query =>
 /**
  * Valide que tous les tokens quantité de la query sont présents
  * dans le titre ou le format du produit.
- *
- * Cas particuliers :
- * - "x10" → accepte aussi "10" isolé dans le texte
- * - Pas de format disponible ET titre sans quantité → souple (accepté)
- * - Pas de format disponible ET titre contient une quantité DIFFÉRENTE → rejeté
- *   (évite les faux positifs : "165g" ≠ "600g")
  */
 const validateQuantity = (product, quantityTokens) => {
   if (!quantityTokens.length) return true;
@@ -143,26 +143,15 @@ const validateQuantity = (product, quantityTokens) => {
   });
 };
 
-/**
- * Calcule le prix final et la cible de comparaison selon le type de produit.
- *
- * - Vrac (pas de token quantité, poids variable) :
- *     → Si rawUnitPrice dispo : comparer prix/kg au prix_unitaire_kg du ticket
- *     → Sinon : comparer rawPrice au targetPrice
- * - Produit pesé avec token quantité ("600G") : poids × prix/kg
- * - Produit standard : rawPrice vs targetPrice
- */
+
 const computePrice = (rawPrice, rawUnitPrice, article, targetPrice, isVrac) => {
   const unitPrice = normalizePrice(rawUnitPrice);
 
   if (isVrac) {
-  if (unitPrice) {
-    return { finalPrice: unitPrice, compareTarget: article.prix_unitaire_kg };
-  } else {
-    // Pas de prix/kg dispo → impossible de valider un produit vrac → on rejette
-    return { finalPrice: null, compareTarget: null };
+    return unitPrice
+      ? { finalPrice: unitPrice,               compareTarget: article.prix_unitaire_kg }
+      : { finalPrice: normalizePrice(rawPrice), compareTarget: targetPrice };
   }
-}
 
   if (article.poids_kg && unitPrice) {
     return {
