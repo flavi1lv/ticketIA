@@ -1,86 +1,137 @@
-const { normalizePrice, withRetry, sleep } = require('../utils/helpers');
+const {
+  normalizePrice,
+  withRetry,
+  PRICE_DIFF_THRESHOLD,
+  SCORE_THRESHOLD,
+  scoreSimilarity,
+  extractQuantityTokens,
+  validateQuantity,
+  computePrice,
+} = require('../utils/helpers');
 
 const scrapeCarrefour = async (browser, article, targetPrice) => {
   return await withRetry(async () => {
     const context = await browser.newContext({
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
       viewport: { width: 1920, height: 1080 },
-      locale: 'fr-FR'
+      locale: 'fr-FR',
     });
-    
-    const page = await context.newPage();
+
+    const page  = await context.newPage();
+    const query = article.recherche_optimisee;
 
     try {
       await page.route('**/*', route => {
         const type = route.request().resourceType();
-        if (['image', 'media'].includes(type)) route.abort();
+        if (['image', 'media', 'font'].includes(type)) route.abort();
         else route.continue();
       });
 
-      const query = article.recherche_optimisee;
       const url = `https://www.carrefour.fr/s?q=${encodeURIComponent(query)}&sort=relevance`;
+
+      // Intercepter la réponse XHR/fetch (stratégie principale)
+      let apiData = null;
+      const apiInterceptPromise = page
+        .waitForResponse(
+          res =>
+            res.status() === 200 &&
+            res.request().resourceType() === 'fetch' &&
+            (res.url().includes('/api/') || res.url().includes('search')),
+          { timeout: 8000 }
+        )
+        .then(res => res.json())
+        .then(json => { apiData = json; })
+        .catch(() => {});
 
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
       await page.locator('#onetrust-accept-btn-handler').click({ timeout: 2000 }).catch(() => {});
-      await page.waitForSelector('[data-testid="product-card"], article', { timeout: 10000 }).catch(() => {});
-      await sleep(1500);
 
-      // 1. EXTRACTION DES 5 PREMIERS RÉSULTATS
-      const products = await page.evaluate(() => {
-        const cards = document.querySelectorAll('[data-testid="product-card"], article, a[href*="/p/"]');
-        return Array.from(cards).slice(0, 5).map(el => {
-          const titleEl = el.querySelector('h2, h3, [class*="title"], [class*="name"]');
-          const mainTitle = titleEl ? titleEl.innerText.trim() : 'Produit Carrefour';
+      await Promise.race([
+        apiInterceptPromise,
+        page.waitForSelector('[data-testid="product-card"], article', { timeout: 10000 }).catch(() => {}),
+      ]);
 
-          const priceEl = el.querySelector('[class*="price"], [itemprop="price"], [class*="amount"]');
-          let rawPrice = priceEl ? priceEl.innerText.trim() : '';
-          
-          const unitPriceEl = el.querySelector('.product-price__per-unit, [class*="per-unit"]');
-          let rawUnitPrice = unitPriceEl ? unitPriceEl.innerText.trim() : '';
+      // ── EXTRACTION ──────────────────────────────────────────────────────────
+      let products = [];
 
-          return { titre: mainTitle, rawPrice, rawUnitPrice };
+      if (apiData) {
+        const hits = apiData.hits || apiData.results || apiData.products || [];
+        products = hits.slice(0, 5).map(h => ({
+          titre:        h.name || h.title || '',
+          rawPrice:     h.price?.current?.toString() || '',
+          rawUnitPrice: h.price?.perUnit?.toString() || '',
+          rawFormat:    h.format || h.quantity || h.weight || '',
+        }));
+      } else {
+        products = await page.evaluate(() => {
+          const cards = document.querySelectorAll('[data-testid="product-card"], article, a[href*="/p/"]');
+          return Array.from(cards).slice(0, 5).map(el => {
+            const titleEl     = el.querySelector('h2, h3, [class*="title"], [class*="name"]');
+            const priceEl     = el.querySelector('[class*="price"], [itemprop="price"], [class*="amount"]');
+            const unitPriceEl = el.querySelector('.product-price__per-unit, [class*="per-unit"]');
+            const formatEl    = Array.from(
+              el.querySelectorAll('[class*="format"], [class*="quantity"], [class*="grammage"], [class*="weight"], [class*="packaging"]')
+            ).find(e => !['BUTTON', 'A'].includes(e.tagName) && e.innerText.trim().length > 2);
+
+            return {
+              titre:        titleEl?.innerText.trim()     ?? 'Produit Carrefour',
+              rawPrice:     priceEl?.innerText.trim()     ?? '',
+              rawUnitPrice: unitPriceEl?.innerText.trim() ?? '',
+              rawFormat:    formatEl?.innerText.trim()    ?? '',
+            };
+          });
         });
-      });
-
-      if (!products || products.length === 0) {
-        return { status: 'not_found' };
       }
 
-      // Mots de recherche pour vérification basique
-      const queryWords = query.toLowerCase().split(' ').filter(w => w.length > 2);
+      if (!products.length) return { status: 'not_found', reason: 'no_products' };
 
-      // 2. RECHERCHE DU MEILLEUR MATCH PARMI LES 5
-      for (const p of products) {
-        if (!p.rawPrice && !p.rawUnitPrice) continue;
+      // ── SCORING & SÉLECTION ─────────────────────────────────────────────────
+      const quantityTokens = extractQuantityTokens(query);
+      const isVrac         = !!article.poids_kg && !quantityTokens.length;
 
-        let finalPrice = normalizePrice(p.rawPrice);
-        const unitPrice = normalizePrice(p.rawUnitPrice);
+      const candidates = products
+        .map(p => {
+          const { finalPrice, compareTarget } = computePrice(
+            p.rawPrice, p.rawUnitPrice, article, targetPrice, isVrac
+          );
+          const score = scoreSimilarity(p.titre, query);
+          const diff  = finalPrice && compareTarget
+            ? Math.abs(finalPrice - compareTarget) / compareTarget
+            : Infinity;
+          const qtyOk = validateQuantity(p, quantityTokens);
 
-        // Si le produit est au kilo et qu'on a un poids
-        if (article.poids_kg && unitPrice) {
-          finalPrice = Number((article.poids_kg * unitPrice).toFixed(2));
-        }
+          return { ...p, finalPrice, score, diff, qtyOk };
+        })
+        .filter(p =>
+          p.finalPrice               &&
+          p.score >= SCORE_THRESHOLD  &&
+          p.diff  <= PRICE_DIFF_THRESHOLD &&
+          p.qtyOk
+        )
+        .sort((a, b) => a.diff - b.diff || b.score - a.score);
 
-        if (!finalPrice) continue;
-
-        // Calcul de l'écart avec le prix du ticket
-        const diff = Math.abs(finalPrice - targetPrice) / targetPrice;
-        
-        // Vérification texte: Le titre doit contenir au moins un mot clé
-        const titleLower = p.titre.toLowerCase();
-        const textMatch = queryWords.length === 0 || queryWords.some(w => titleLower.includes(w));
-
-        // Si le prix est proche (<= 30% d'écart) ET que le texte matche un minimum
-        if (diff <= 0.30 && textMatch) {
-          return { 
-            status: 'found', 
-            product: { titre: p.titre, prix: finalPrice } 
-          };
-        }
+      if (!candidates.length) {
+        const debugInfo = products.map(p => ({
+          titre:  p.titre,
+          format: p.rawFormat,
+          score:  scoreSimilarity(p.titre, query).toFixed(2),
+          price:  normalizePrice(p.rawPrice),
+          qtyOk:  validateQuantity(p, quantityTokens),
+        }));
+        console.log(JSON.stringify({
+          scraper: 'carrefour', query,
+          msg: 'no_valid_candidate',
+          ts: new Date().toISOString(),
+          quantityTokens, debugInfo,
+        }));
+        return { status: 'not_found', reason: 'no_match', debug: debugInfo };
       }
 
-      // Si on boucle sur les 5 sans trouver un prix cohérent
-      return { status: 'not_found' };
+      const best = candidates[0];
+      return {
+        status: 'found',
+        product: { titre: best.titre, prix: best.finalPrice },
+      };
 
     } finally {
       await page.close().catch(() => {});
@@ -88,5 +139,7 @@ const scrapeCarrefour = async (browser, article, targetPrice) => {
     }
   }, 2, 2000);
 };
+
+scrapeCarrefour.requiresBrowser = true;
 
 module.exports = scrapeCarrefour;
