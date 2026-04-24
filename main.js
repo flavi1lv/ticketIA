@@ -4,12 +4,13 @@ chromium.use(stealth);
 const path = require('path');
 const fs = require('fs');
 const { scanReceipt } = require('./utils/scanner');
+const { normalizePrice } = require('./utils/helpers');
 
-const IGNORED_SCRAPERS = []; //['carrefour.js']; 
+const IGNORED_SCRAPERS = []; // ex: ['carrefour.js']
 
-// Tolérance de 40% pour s'adapter aux écarts de prix entre enseignes
-const MATCH_THRESHOLD = 0.40; 
-
+// ─────────────────────────────────────────────────────────────────────────────
+// CHARGEMENT DES SCRAPERS
+// ─────────────────────────────────────────────────────────────────────────────
 const loadScrapers = () => {
   const scrapersDir = path.join(__dirname, 'scrapers');
   const loaded = {};
@@ -23,6 +24,9 @@ const loadScrapers = () => {
   return loaded;
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPARATEUR PRINCIPAL
+// ─────────────────────────────────────────────────────────────────────────────
 const runComparator = async (imagePath) => {
   const scrapers = loadScrapers();
   const articles = await scanReceipt(imagePath);
@@ -30,55 +34,52 @@ const runComparator = async (imagePath) => {
 
   console.table(articles);
 
-  // 🚀 OPTIMISATION : On ne lance Chromium QUE si un scraper en a besoin 
-  // Monoprix utilise fetch (API), donc il n'en a pas besoin.
+  // Lance le navigateur uniquement si au moins un scraper en a besoin
+  // (déterminé par le flag requiresBrowser exporté par chaque scraper)
+  const needsBrowser = Object.values(scrapers).some(fn => fn.requiresBrowser);
+  const browserScraperNames = Object.entries(scrapers)
+    .filter(([, fn]) => fn.requiresBrowser)
+    .map(([name]) => name);
+
   let browser = null;
-  const scrapersRequiringBrowser = Object.keys(scrapers).filter(name => name !== 'monoprix');
-  
-  if (scrapersRequiringBrowser.length > 0) {
-    console.log(`🌐 Lancement du navigateur pour : ${scrapersRequiringBrowser.join(', ')}...`);
+  if (needsBrowser) {
+    console.log(`🌐 Lancement du navigateur pour : ${browserScraperNames.join(', ')}...`);
     browser = await chromium.launch({ headless: true });
   } else {
-    console.log("⚡ Mode API Directe (Aucun navigateur lancé)");
+    console.log('⚡ Mode API Directe (Aucun navigateur lancé)');
   }
 
   let totalOriginal = 0;
   const totaux = {};
-  Object.keys(scrapers).forEach(n => totaux[n] = 0);
+  Object.keys(scrapers).forEach(n => { totaux[n] = 0; });
 
   for (const item of articles) {
-    if (item.prix_total === null || item.prix_total === undefined) continue;
-    
-    const pTicket = parseFloat(String(item.prix_total).replace(',', '.'));
-    if (isNaN(pTicket)) continue;
-    
+    const pTicket = normalizePrice(item.prix_total);
+    if (!pTicket) continue;
+
     totalOriginal += pTicket;
     console.log(`\n🔎 Recherche : "${item.recherche_optimisee}" (${pTicket.toFixed(2)}€)`);
 
     const results = {};
+
     const promises = Object.entries(scrapers).map(async ([name, scraperFn]) => {
       try {
         const res = await scraperFn(browser, item, pTicket);
-        
-        if (res && res.status === 'found') {
-          const pScraped = res.product.prix;
-          const diff = Math.abs(pScraped - pTicket) / pTicket;
-          
-          if (diff <= MATCH_THRESHOLD) { 
-            results[name] = { prix: pScraped, titre: res.product.titre };
-            console.log(`   ✅ [${name}] Validé: ${res.product.titre} à ${pScraped.toFixed(2)}€`);
-          } else {
-            console.log(`   ⚠️ [${name}] Rejeté: Écart trop grand (${(diff*100).toFixed(1)}%). Trouvé à ${pScraped.toFixed(2)}€`);
-          }
+
+        if (res?.status === 'found') {
+          results[name] = { prix: res.product.prix, titre: res.product.titre };
+          console.log(`   ✅ [${name}] Validé: ${res.product.titre} à ${res.product.prix.toFixed(2)}€`);
         } else {
-            console.log(`   ❌ [${name}] Introuvable`);
+          console.log(`   ❌ [${name}] Introuvable`);
         }
-      } catch (e) { console.log(`   ❌ Erreur ${name}: ${e.message}`); }
+      } catch (e) {
+        console.log(`   ❌ Erreur ${name}: ${e.message}`);
+      }
     });
 
     await Promise.all(promises);
 
-    // Si on n'a rien trouvé, on prend le prix du ticket par défaut
+    // Si introuvable → prix ticket par défaut
     Object.keys(scrapers).forEach(n => {
       totaux[n] += results[n] ? results[n].prix : pTicket;
     });
@@ -86,13 +87,16 @@ const runComparator = async (imagePath) => {
 
   if (browser) await browser.close();
 
-  console.log(`\n============================`);
+  console.log('\n============================');
   console.log(`TOTAL TICKET ORIGINE: ${totalOriginal.toFixed(2)}€`);
-  Object.entries(totaux).forEach(([m, t]) => {
-    const eco = totalOriginal - t;
-    console.log(`${m.toUpperCase()}: ${t.toFixed(2)}€ ${eco > 0 ? `(Économie: ${eco.toFixed(2)}€ 📉)` : ''}`);
+  Object.entries(totaux).forEach(([name, total]) => {
+    const eco = totalOriginal - total;
+    console.log(
+      `${name.toUpperCase()}: ${total.toFixed(2)}€` +
+      (eco > 0 ? ` (Économie: ${eco.toFixed(2)}€ 📉)` : '')
+    );
   });
-  console.log(`============================\n`);
+  console.log('============================\n');
 };
 
 runComparator(path.join(__dirname, 'ticket.jpg'));
