@@ -1,1 +1,96 @@
-
+/* Inputs éditables dans le tableau */
+.editable-price {
+  width: 70px;
+  text-align: right;
+  border: 1px dashed transparent;
+  background: transparent;
+  font-family: var(--font-main);
+  font-size: 16px;
+  color: var(--on-surface);
+  font-weight: 500;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  transition: all 0.2s ease;
+}
+.editable-price:hover {
+  border-color: var(--outline-variant);
+  background: var(--surface-dim);
+}
+.editable-price:focus {
+  outline: none;
+  border-color: var(--primary);
+  background: var(--surface);
+  box-shadow: 0 0 0 2px var(--primary-container);
+}
+ 
+/* Retire les flèches des inputs number */
+.editable-price::-webkit-outer-spin-button,
+.editable-price::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+ 
+/* Modale Paramètres */
+.modal-overlay {
+  display: none; 
+  position: fixed;
+  top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(11, 28, 48, 0.6);
+  backdrop-filter: blur(4px);
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+}
+.modal-overlay.active { display: flex; animation: fadeIn 0.3s ease; }
+ 
+.modal-content {
+  background: var(--surface);
+  padding: var(--space-xl);
+  border-radius: var(--radius-lg);
+  width: 90%;
+  max-width: 500px;
+  position: relative;
+  box-shadow: var(--shadow-hover);
+}
+ 
+.btn-close {
+  position: absolute;
+  top: 16px; right: 16px;
+  background: none; border: none;
+  font-size: 20px; color: var(--secondary);
+  cursor: pointer;
+}
+ 
+.btn-icon {
+  background: none;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 4px;
+  transition: transform 0.2s ease;
+}
+.btn-icon:hover { transform: scale(1.1); }
+ 
+.form-group { display: flex; flex-direction: column; gap: 8px; }
+.input-text {
+  padding: 10px 12px;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius);
+  font-family: var(--font-main);
+  font-size: 16px;
+}
+.input-text:focus { outline: none; border-color: var(--primary); }
+ 
+.btn-danger {
+  background-color: #fef2f2;
+  color: #dc2626;
+  border: 1px solid #fca5a5;
+  padding: 10px 24px;
+  border-radius: var(--radius);
+  font-family: var(--font-main);
+  font-weight: 600;
+  cursor: pointer;
+  width: 100%;
+  transition: all 0.2s ease;
+}
+.btn-danger:hover { background-color: #fee2e2; border-color: #dc2626; }
