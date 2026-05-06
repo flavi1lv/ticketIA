@@ -1,3 +1,5 @@
+// ===== SCAN&SAVE — app.js (Frontend) =====
+
 // ===== ELEMENTS DOM =====
 const dropzone    = document.getElementById('dropzone');
 const fileInput   = document.getElementById('file-input');
@@ -5,185 +7,271 @@ const previewBar  = document.getElementById('preview-bar');
 const previewName = document.getElementById('preview-name');
 const btnAnalyze  = document.getElementById('btn-analyze');
 const btnReset    = document.getElementById('btn-reset');
-const btnSave     = document.getElementById('btn-save-ticket');
 
 const stepUpload  = document.getElementById('step-upload');
 const stepLoading = document.getElementById('step-loading');
 const stepResults = document.getElementById('step-results');
 
 let selectedFile = null;
-let currentTicketData = []; 
 
-// Tableaux d'astuces
+// Tableaux de conseils amusants, malins et originaux
 const TIPS = [
   "💡 Astuce : Le prix au kilo est votre meilleur ami, c'est le seul qui ne ment pas !",
-  "🛒 Astuce : N'allez jamais faire les courses le ventre vide.",
+  "🤖 L'IA travaille dur... et espère secrètement trouver du chocolat en promo.",
+  "🛒 Astuce : N'allez jamais faire les courses le ventre vide. Jamais.",
   "💸 Promo à -50% ? Si vous n'en aviez pas besoin, ne pas l'acheter c'est 100% de réduction.",
-  "🍝 Les pâtes ont augmenté, mais rassurez-vous, les coquillettes restent une valeur sûre.",
-  "🏃 Les produits les moins chers sont souvent tout en bas des rayons."
+  "🥕 Privilégiez les produits de saison : moins chers, plus de goût, et la planète vous remercie.",
+  "📦 Acheter en gros volume est économique... à condition d'avoir de la place dans les placards !",
+  "🏃 Le saviez-vous ? Les produits les moins chers sont souvent tout en bas des rayons. L'heure des squats !",
+  "📊 On compare les prix pour vous. Spoiler : les pâtes, ça coûte un pognon de dingue."
 ];
 
-let tipInterval;
-function startTips() {
-  const tipElement = document.getElementById('loading-tip');
-  const updateTip = () => {
-    tipElement.innerText = TIPS[Math.floor(Math.random() * TIPS.length)];
-  };
-  updateTip();
-  tipInterval = setInterval(updateTip, 5000);
-}
-
-// ===== NAVIGATION =====
+// ===== NAVIGATION ENTRE ÉTAPES =====
 function showStep(step) {
-  [stepUpload, stepLoading, stepResults].forEach(s => { s.classList.remove('active'); s.style.display = 'none'; });
+  [stepUpload, stepLoading, stepResults].forEach(s => {
+    s.classList.remove('active');
+    s.style.display = 'none';
+  });
   step.style.display = 'block';
   setTimeout(() => step.classList.add('active'), 10);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-// ===== UPLOAD =====
-dropzone.addEventListener('click', (e) => { if(e.target.id !== 'file-input') fileInput.click(); });
-fileInput.addEventListener('change', e => { if (e.target.files[0]) handleFileSelect(e.target.files[0]); });
+// ===== UPLOAD / DRAG & DROP =====
+dropzone.addEventListener('click', () => fileInput.click());
+
+dropzone.addEventListener('dragover', e => {
+  e.preventDefault();
+  dropzone.classList.add('dragover');
+});
+dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+
+dropzone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropzone.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file) handleFileSelect(file);
+});
+
+fileInput.addEventListener('change', e => {
+  if (e.target.files[0]) handleFileSelect(e.target.files[0]);
+});
 
 function handleFileSelect(file) {
+  const allowed = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+  if (!allowed.includes(file.type)) {
+    alert('Format non supporté. Utilisez JPG, PNG ou PDF.');
+    return;
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    alert('Fichier trop volumineux (max 10 Mo).');
+    return;
+  }
   selectedFile = file;
   previewName.textContent = file.name;
   previewBar.style.display = 'flex';
 }
 
-// ===== ANALYSE TEMPS RÉEL =====
-btnAnalyze.addEventListener('click', () => { if (selectedFile) startAnalysis(selectedFile); });
+// ===== ANALYSE =====
+btnAnalyze.addEventListener('click', () => {
+  if (!selectedFile) return;
+  startAnalysis(selectedFile);
+});
 
 async function startAnalysis(file) {
   showStep(stepLoading);
-  startTips();
   
-  const progressBar = document.getElementById('progress-bar');
-  const progressText = document.getElementById('progress-text');
-  const currentSearchItem = document.getElementById('current-search-item');
+  // Démarrer la simulation de progression et l'affichage des astuces
+  startProgressSimulation();
 
   const formData = new FormData();
   formData.append('ticket', file);
+  if (window.currentUserId) {
+    formData.append('googleId', window.currentUserId);
+  }
 
   try {
-    const response = await fetch('/api/comparer-ticket-stream', { method: 'POST', body: formData });
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    
-    currentTicketData = [];
+    const response = await fetch('/api/comparer-ticket', {
+      method: 'POST',
+      body: formData,
+    });
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      
-      const chunk = decoder.decode(value);
-      const lines = chunk.split('\n').filter(l => l.trim());
-
-      for (let line of lines) {
-        const data = JSON.parse(line);
-        if (data.type === 'progress') {
-           const pct = Math.round((data.current / data.total) * 100);
-           progressBar.style.width = `${pct}%`;
-           progressText.innerText = `Analyse : ${data.current}/${data.total}`;
-           currentSearchItem.innerText = `🔍 En cours : ${data.item}`;
-        }
-        if (data.type === 'result') {
-           currentTicketData = data.articles;
-           renderResultsTable();
-        }
-      }
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(errData.error || `Erreur serveur : ${response.status}`);
     }
+    
+    const data = await response.json();
+    stopProgressSimulation(); 
+    displayResults(data);
+
   } catch (err) {
-    alert("Erreur analyse");
+    console.error("Erreur lors de l'analyse :", err);
+    stopProgressSimulation();
     showStep(stepUpload);
-  } finally { clearInterval(tipInterval); }
+    alert(`Oups ! L'analyse a échoué.\n\nDétail : ${err.message}`);
+  }
 }
 
-// ===== RÉSULTATS & ÉDITION =====
-function renderResultsTable() {
+// ===== SIMULATION DE PROGRESSION ET ASTUCES =====
+let progressInterval;
+let tipInterval;
+
+function startProgressSimulation() {
+  const progressBar = document.getElementById('progress-bar');
+  const progressText = document.getElementById('progress-text');
+  const origName = document.getElementById('current-original-name');
+  const normName = document.getElementById('current-normalized-name');
+  const tipElement = document.getElementById('loading-tip');
+  
+  // Noms fictifs pour l'animation d'attente
+  const fakeItems = [
+    { o: "LAIT DEMI ECREME 1L", n: "Lait demi-écrémé" },
+    { o: "OEUFS PLEIN AIR X12", n: "Oeufs frais x12" },
+    { o: "PATES SPAGHETTI 500", n: "Pâtes spaghetti 500g" },
+    { o: "BEURRE DOUX PLAQUE", n: "Beurre doux 250g" },
+    { o: "STEACK HACHE 5% 400G", n: "Viande hachée boeuf 5%" }
+  ];
+
+  let currentItem = 0;
+  let estimatedTotal = Math.floor(Math.random() * 5) + 6; 
+  
+  progressBar.style.width = '0%';
+  progressText.innerText = "Lecture initiale de l'image...";
+  origName.innerText = "Extraction OCR...";
+  normName.innerText = "En attente...";
+  
+  // Astuce initiale
+  tipElement.innerText = TIPS[Math.floor(Math.random() * TIPS.length)];
+
+  // 1. Boucle pour la barre de progression (toutes les 2.5 secondes)
+  progressInterval = setInterval(() => {
+    currentItem++;
+    if (currentItem > estimatedTotal) {
+      progressBar.style.width = '95%';
+      progressText.innerText = `Finalisation des comparaisons...`;
+      return;
+    }
+
+    const percentage = Math.min((currentItem / estimatedTotal) * 90, 95);
+    progressBar.style.width = `${percentage}%`;
+    progressText.innerText = `Vérification de l'article ${currentItem}/${estimatedTotal}...`;
+    
+    const fakeData = fakeItems[currentItem % fakeItems.length];
+    origName.innerText = fakeData.o;
+    normName.innerText = fakeData.n;
+
+  }, 2500); 
+
+  // 2. Boucle pour changer l'astuce (toutes les 5 secondes)
+  tipInterval = setInterval(() => {
+    tipElement.style.animation = 'none';
+    tipElement.offsetHeight; // Déclenche un reflow pour relancer l'animation
+    tipElement.innerText = TIPS[Math.floor(Math.random() * TIPS.length)];
+    tipElement.style.animation = 'fadeTip 5s ease forwards';
+  }, 5000);
+}
+
+function stopProgressSimulation() {
+  clearInterval(progressInterval);
+  clearInterval(tipInterval);
+  document.getElementById('progress-bar').style.width = '100%';
+  document.getElementById('progress-text').innerText = "Terminé !";
+}
+
+// ===== AFFICHAGE DES RÉSULTATS =====
+function displayResults(data) {
+  const articles = data.articles || [];
+  const totalC = data.totalCarrefour || 0;
+  const totalM = data.totalMonoprix || 0;
+  const totalTicket = data.prixTotal || 0; 
+  
+  document.getElementById('total-carrefour').textContent = formatPrice(totalC);
+  document.getElementById('total-monoprix').textContent  = formatPrice(totalM);
+  
+  // Calcul du gain global
+  let bestTotal = Math.min(totalTicket, totalC, totalM);
+  let summaryText = "";
+  
+  if (bestTotal === totalTicket && totalTicket > 0) {
+    document.getElementById('total-saving').textContent = "Ticket gagnant";
+    document.getElementById('total-saving').style.color = "var(--primary)";
+    summaryText = `${articles.length} articles · Bonne nouvelle, votre ticket initial était le moins cher !`;
+  } else {
+    const diff = totalTicket - bestTotal;
+    document.getElementById('total-saving').textContent = `-${formatPrice(diff)}`;
+    document.getElementById('total-saving').style.color = "var(--primary)";
+    summaryText = `${articles.length} articles · Vous auriez pu économiser ${formatPrice(diff)} ailleurs.`;
+  }
+  document.getElementById('results-summary').textContent = summaryText;
+
+  // Remplir le tableau
   const tbody = document.getElementById('table-body');
   tbody.innerHTML = '';
-  
-  currentTicketData.forEach((item, index) => {
+
+  articles.forEach(item => {
     const tr = document.createElement('tr');
+    
+    const pt = item.prix_ticket; 
+    const pc = item.prix_carrefour;
+    const pm = item.prix_monoprix;
+    
     tr.innerHTML = `
-      <td><span class="item-name">${item.nom}</span></td>
-      <td class="align-right"><input type="number" step="0.01" class="editable-price" data-index="${index}" data-field="prix_ticket" value="${item.prix_ticket || ''}"></td>
-      <td class="align-right"><input type="number" step="0.01" class="editable-price" data-index="${index}" data-field="prix_carrefour" value="${item.prix_carrefour || ''}"></td>
-      <td class="align-right"><input type="number" step="0.01" class="editable-price" data-index="${index}" data-field="prix_monoprix" value="${item.prix_monoprix || ''}"></td>
-      <td class="align-right" id="badge-${index}">${generateBadge(item)}</td>
+      <td>
+        <span class="item-name">${escHtml(item.nom || 'Article inconnu')}</span><br>
+        <span style="font-size:12px;color:var(--secondary)">Payé sur ticket : ${formatPrice(pt)}</span>
+      </td>
+      <td class="align-right">${priceCell(pc, 'price-carrefour')}</td>
+      <td class="align-right">${priceCell(pm, 'price-monoprix')}</td>
+      <td class="align-right">${generateDifferenceBadge(pt, pc, pm)}</td>
     `;
     tbody.appendChild(tr);
   });
 
-  document.querySelectorAll('.editable-price').forEach(inp => {
-    inp.addEventListener('input', (e) => {
-      const idx = e.target.dataset.index;
-      currentTicketData[idx][e.target.dataset.field] = parseFloat(e.target.value) || 0;
-      document.getElementById(`badge-${idx}`).innerHTML = generateBadge(currentTicketData[idx]);
-      updateTotals();
-    });
-  });
-
-  updateTotals();
   showStep(stepResults);
-  if(window.currentUser) btnSave.style.display = 'inline-block';
 }
 
-function updateTotals() {
-  let tT = 0, tC = 0, tM = 0;
-  currentTicketData.forEach(i => { tT += i.prix_ticket || 0; tC += i.prix_carrefour || 0; tM += i.prix_monoprix || 0; });
+// ===== RESET =====
+btnReset.addEventListener('click', () => {
+  selectedFile = null;
+  fileInput.value = '';
+  previewBar.style.display = 'none';
+  previewName.textContent = '';
+  showStep(stepUpload);
+});
 
-  document.getElementById('total-carrefour').innerText = tC.toFixed(2) + " €";
-  document.getElementById('total-monoprix').innerText = tM.toFixed(2) + " €";
+// ===== HELPERS =====
+function formatPrice(val) {
+  if (typeof val !== 'number' || isNaN(val) || val === 0) return '—';
+  return val.toFixed(2).replace('.', ',') + ' €';
+}
+
+function priceCell(val, cls) {
+  if (val === null || val === undefined || val === 0) return '<span class="price-na" style="font-size:12px; color:var(--secondary)">Introuvable</span>';
+  return `<span class="${cls}">${formatPrice(val)}</span>`;
+}
+
+function generateDifferenceBadge(ticket, carrefour, monoprix) {
+  if (!ticket || ticket === 0) return '<span class="diff-badge equal">N/A</span>';
   
-  const min = Math.min(...[tT, tC, tM].filter(p => p > 0));
-  const savEl = document.getElementById('total-saving');
-  if (tT <= min && tT > 0) savEl.innerText = "🏆 Vous avez trouvé moins cher !";
-  else savEl.innerText = `-${(tT - min).toFixed(2)} €`;
-}
-
-function generateBadge(i) {
-  const pT = i.prix_ticket || 0;
-  const min = Math.min(...[pT, i.prix_carrefour, i.prix_monoprix].filter(p => p > 0));
-  if (pT <= min && pT > 0) return '<span class="diff-badge equal">Gagnant</span>';
-  return `<span class="diff-badge cheaper-c">Gain : ${(pT - min).toFixed(2)}€</span>`;
-}
-
-// ===== PARAMÈTRES & ACTIONS =====
-const modal = document.getElementById('settings-modal');
-document.getElementById('btn-settings').addEventListener('click', () => modal.classList.add('active'));
-document.getElementById('btn-close-settings').addEventListener('click', () => modal.classList.remove('active'));
-
-btnSave.addEventListener('click', async () => {
-  if (!window.currentUser) return;
-  const res = await fetch('/api/save-ticket', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ googleId: window.currentUser.googleId, articles: currentTicketData })
-  });
-  if (res.ok) { btnSave.innerText = "✅ Sauvegardé"; btnSave.disabled = true; }
-});
-
-document.getElementById('btn-save-name').addEventListener('click', async () => {
-  const name = document.getElementById('settings-name-input').value;
-  await fetch('/api/user/rename', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ googleId: window.currentUser.googleId, newName: name })
-  });
-  document.getElementById('nav-user-name').innerText = "👋 " + name;
-  modal.classList.remove('active');
-});
-
-document.getElementById('btn-delete-account').addEventListener('click', async () => {
-  if(confirm("Supprimer définitivement ?")) {
-    await fetch('/api/user/delete', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ googleId: window.currentUser.googleId })
-    });
-    location.reload();
+  let min = ticket;
+  let winner = 'ticket';
+  
+  if (carrefour && carrefour > 0 && carrefour < min) { min = carrefour; winner = 'carrefour'; }
+  if (monoprix && monoprix > 0 && monoprix < min) { min = monoprix; winner = 'monoprix'; }
+  
+  if (winner === 'ticket') {
+    return '<span class="diff-badge equal">Le moins cher</span>';
+  } else if (winner === 'carrefour') {
+    const saved = ticket - carrefour;
+    return `<span class="diff-badge cheaper-c">Carrefour -${formatPrice(saved)}</span>`;
+  } else {
+    const saved = ticket - monoprix;
+    return `<span class="diff-badge cheaper-m">Monoprix -${formatPrice(saved)}</span>`;
   }
-});
+}
 
-btnReset.addEventListener('click', () => { location.reload(); });
+function escHtml(str) {
+  if(!str) return '';
+  return str.toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
