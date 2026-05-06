@@ -1,261 +1,212 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Scan&Save - Comparateur de prix</title>
-    <script src="https://accounts.google.com/gsi/client" async defer></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
-
-        body {
-            font-family: 'Poppins', sans-serif;
-            background: linear-gradient(135deg, #e0c3fc 0%, #8ec5fc 100%);
-            min-height: 100vh;
-            margin: 0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: #333;
-        }
-
-        .app-container {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(10px);
-            border-radius: 24px;
-            padding: 40px;
-            width: 90%;
-            max-width: 450px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-            text-align: center;
-        }
-
-        h1 {
-            margin: 0 0 5px 0;
-            font-size: 2.2em;
-            color: #2c3e50;
-        }
-
-        p.subtitle {
-            color: #7f8c8d;
-            margin-bottom: 30px;
-            font-size: 0.95em;
-        }
-
-        #auth-block {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 15px;
-        }
-
-        #scan-block {
-            display: none;
-            animation: fadeIn 0.6s ease;
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(15px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        #user-name {
-            color: #34495e;
-            margin-bottom: 15px;
-            font-size: 1.3em;
-        }
-
-        #btn-logout {
-            background: transparent;
-            border: 2px solid #e74c3c;
-            color: #e74c3c;
-            padding: 6px 16px;
-            border-radius: 20px;
-            cursor: pointer;
-            font-weight: 600;
-            font-size: 0.85em;
-            transition: all 0.3s ease;
-            margin-bottom: 30px;
-        }
-
-        #btn-logout:hover {
-            background: #e74c3c;
-            color: white;
-            transform: scale(1.05);
-        }
-
-        .file-upload-wrapper {
-            margin-bottom: 25px;
-        }
-
-        #ticket-file {
-            width: 100%;
-            padding: 15px;
-            border: 2px dashed #bdc3c7;
-            border-radius: 12px;
-            background: #fdfdfd;
-            cursor: pointer;
-            box-sizing: border-box;
-            transition: all 0.3s ease;
-            font-family: 'Poppins', sans-serif;
-            color: #7f8c8d;
-        }
-
-        #ticket-file:hover {
-            border-color: #3498db;
-            background: #f4f9fd;
-        }
-
-        #btn-scan {
-            background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
-            color: white;
-            border: none;
-            padding: 15px 30px;
-            font-size: 16px;
-            border-radius: 12px;
-            font-weight: 600;
-            cursor: pointer;
-            width: 100%;
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
-        }
-
-        #btn-scan:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 10px 20px rgba(37, 117, 252, 0.4);
-        }
-
-        #btn-scan:active {
-            transform: translateY(0);
-        }
-
-        #resultat {
-            margin-top: 25px;
-            border-radius: 12px;
-            font-weight: 500;
-            transition: all 0.3s ease;
-        }
-
-        .result-card {
-            background: #f0fdf4;
-            border: 1px solid #bbf7d0;
-            border-left: 5px solid #22c55e;
-            padding: 20px;
-            border-radius: 12px;
-            text-align: left;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-            animation: fadeIn 0.4s ease;
-        }
-
-        .result-card p {
-            margin: 8px 0;
-            color: #166534;
-        }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Scan&Save - Comparez vos courses</title>
+  
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Work+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-    <div class="app-container">
-        <h1>🛒 Scan&Save</h1>
-        <p class="subtitle">La solution intelligente pour comparer vos tickets de caisse.</p>
 
-        <div id="auth-block">
-            <div id="g_id_onload"
-                 data-client_id="239338171655-hm0ru2n35k46j2m5et58tfuq4c82vrmm.apps.googleusercontent.com"
-                 data-callback="handleCredentialResponse"
-                 data-auto_select="false"
-                 data-itp_support="true">
-            </div>
-            <div class="g_id_signin" data-type="standard" data-shape="pill" data-theme="filled_blue" data-size="large"></div>
-        </div>
-
-        <div id="scan-block">
-            <h3 id="user-name"></h3>
-            <button id="btn-logout">Se déconnecter</button>
-
-            <div class="file-upload-wrapper">
-                <input type="file" id="ticket-file" accept="image/*">
-            </div>
-            
-            <button id="btn-scan">🔍 Lancer l'analyse du ticket</button>
-        </div>
-
-        <div id="resultat"></div>
+  <!-- NAV -->
+  <nav class="nav">
+    <a href="/" class="nav-logo">Scan&Save</a>
+    <div class="nav-links">
+      <a href="#how" class="nav-link">Comment ça marche</a>
+      
+      <!-- Profil Utilisateur & Paramètres -->
+      <div id="nav-user-container" class="nav-user-container">
+        <span id="nav-user-name" class="nav-user-name"></span>
+        <button id="btn-settings" class="btn-icon" title="Paramètres du compte">⚙️</button>
+        <button id="btn-logout" class="btn-logout">Déconnexion</button>
+      </div>
     </div>
+  </nav>
 
-    <script>
-        let currentUserId = null;
+  <!-- MODALE PARAMÈTRES (Cachée par défaut) -->
+  <div id="settings-modal" class="modal-overlay">
+    <div class="modal-content">
+      <h2 class="headline-md">⚙️ Paramètres du compte</h2>
+      <p class="body-md text-secondary" style="margin-bottom: 16px;">
+        <strong>Confidentialité :</strong> Vos données ne sont ni vendues, ni exploitées à des fins publicitaires. Elles servent uniquement à générer votre historique personnel.
+      </p>
+      
+      <div class="form-group">
+        <label class="label-md">Votre prénom affiché</label>
+        <input type="text" id="settings-name-input" class="input-text" />
+        <button id="btn-save-name" class="btn-secondary" style="margin-top: 8px;">Mettre à jour le prénom</button>
+      </div>
 
-        async function handleCredentialResponse(response) {
-            try {
-                const res = await fetch('/api/auth/google', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ token: response.credential })
-                });
+      <div style="margin-top: 32px; border-top: 1px solid var(--surface-dim); padding-top: 16px;">
+        <button id="btn-delete-account" class="btn-danger">Supprimer mon compte et mes données</button>
+      </div>
+      
+      <button id="btn-close-settings" class="btn-close">✕</button>
+    </div>
+  </div>
 
-                if (res.ok) {
-                    const user = await res.json();
-                    
-                    currentUserId = user.googleId; 
-                    
-                    document.getElementById('auth-block').style.display = 'none';
-                    document.getElementById('scan-block').style.display = 'block';
-                    document.getElementById('user-name').innerText = "Bonjour " + user.name + " ! 👋";
-                }
-            } catch (err) {
-                console.error(err);
-            }
+  <!-- MAIN APP -->
+  <main class="main">
+
+    <!-- ÉTAPE 1 : Upload -->
+    <section id="step-upload" class="step active">
+      <div class="hero-text">
+        <h1 class="hero-title">Payez moins.<br/>Sans changer vos habitudes.</h1>
+        <p class="hero-sub">Scannez n'importe quel ticket de caisse alimentaire.<br/>
+          <strong>Actuellement, nous comparons les prix avec Carrefour et Monoprix. D'autres enseignes arrivent très bientôt !</strong>
+        </p>
+      </div>
+
+      <div id="scan-block">
+        <div class="upload-zone" id="dropzone">
+          <div class="upload-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="12" y1="18" x2="12" y2="12"></line>
+              <line x1="9" y1="15" x2="15" y2="15"></line>
+            </svg>
+          </div>
+          <p class="upload-title">Déposez votre ticket ici</p>
+          <p class="upload-sub">Formats acceptés : JPG, PNG ou PDF (max 10 Mo)</p>
+          <!-- BUG FIX: Remplacement de label par un simple div pour éviter le double-clic -->
+          <div class="btn-primary btn-upload" style="display: inline-block;">Parcourir les fichiers</div>
+          <input type="file" id="file-input" accept="image/*,.pdf" hidden />
+        </div>
+
+        <div class="preview-bar" id="preview-bar" style="display:none;">
+          <span id="preview-name" class="preview-name"></span>
+          <button class="btn-primary" id="btn-analyze">Lancer l'analyse →</button>
+        </div>
+      </div>
+
+      <div id="auth-block" class="auth-optional">
+        <p class="auth-label">Connectez-vous pour sauvegarder automatiquement l'historique de vos tickets.</p>
+        <div id="g_id_onload"
+             data-client_id="239338171655-hm0ru2n35k46j2m5et58tfuq4c82vrmm.apps.googleusercontent.com"
+             data-callback="handleCredentialResponse"
+             data-auto_select="false"
+             data-itp_support="true">
+        </div>
+        <div class="g_id_signin" data-type="standard" data-shape="rectangular" data-theme="outline" data-size="medium"></div>
+      </div>
+    </section>
+
+    <!-- ÉTAPE 2 : Chargement Temps Réel -->
+    <section id="step-loading" class="step">
+      <div class="loading-wrap">
+        <div class="spinner spinner-small"></div>
+        <h2 class="headline-md" id="loading-msg">Analyse en cours…</h2>
+        
+        <div class="progress-wrapper">
+          <div class="progress-container">
+            <div class="progress-bar" id="progress-bar"></div>
+          </div>
+          <p class="body-md text-secondary" id="progress-text">Lecture du ticket...</p>
+        </div>
+
+        <div class="loading-tip-container" id="loading-tip-container">
+          <p class="body-md text-secondary" id="loading-tip">💡 Astuce : ...</p>
+        </div>
+
+        <div class="realtime-status" style="margin-top: 16px;">
+          <p class="body-md text-primary" id="current-search-item" style="font-weight: 500;">🔍 Préparation de l'IA...</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ÉTAPE 3 : Résultats -->
+    <section id="step-results" class="step">
+      <div class="results-header">
+        <div>
+          <h2 class="headline-lg">Analyse terminée</h2>
+          <p class="body-md text-secondary" id="results-summary"></p>
+        </div>
+        <!-- Bouton Sauvegarder ajouté -->
+        <div style="display: flex; gap: 12px;">
+          <button class="btn-secondary" id="btn-reset">Nouveau ticket</button>
+          <button class="btn-primary" id="btn-save-ticket" style="display:none;">💾 Sauvegarder</button>
+        </div>
+      </div>
+
+      <div class="summary-cards">
+        <div class="data-card">
+          <span class="data-label">Total Carrefour</span>
+          <span class="price-display" id="total-carrefour">—</span>
+        </div>
+        <div class="data-card">
+          <span class="data-label">Total Monoprix</span>
+          <span class="price-display" id="total-monoprix">—</span>
+        </div>
+        <div class="data-card highlight">
+          <span class="data-label">Bilan (Meilleurs prix)</span>
+          <span class="price-display text-success" id="total-saving">—</span>
+        </div>
+      </div>
+
+      <div class="table-container">
+        <p style="padding: 12px 16px; font-size: 13px; color: var(--secondary); background: #fdfdfd; border-bottom: 1px solid var(--surface-dim);">
+          ✏️ <em>Si l'IA a fait une erreur, vous pouvez corriger les prix directement dans les cases ci-dessous.</em>
+        </p>
+        <table class="data-table" id="compare-table">
+          <thead>
+            <tr>
+              <th>Produit</th>
+              <th class="align-right">Payé (Ticket)</th>
+              <th class="align-right">Carrefour</th>
+              <th class="align-right">Monoprix</th>
+              <th class="align-right">Différence</th>
+            </tr>
+          </thead>
+          <tbody id="table-body">
+            <!-- Rempli par le JS -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+  
+  <script src="app.js"></script>
+  
+  <script>
+    window.currentUser = null;
+
+    async function handleCredentialResponse(response) {
+      try {
+        const res = await fetch('/api/auth/google', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: response.credential })
+        });
+
+        if (res.ok) {
+          const user = await res.json();
+          window.currentUser = user; 
+          
+          document.getElementById('auth-block').style.display = 'none';
+          document.getElementById('nav-user-container').style.display = 'flex';
+          document.getElementById('nav-user-name').innerText = "👋 " + user.name;
+          document.getElementById('settings-name-input').value = user.name;
         }
+      } catch (err) {
+        console.error("Erreur d'authentification :", err);
+      }
+    }
 
-        document.getElementById('btn-logout').addEventListener('click', () => {
-            document.getElementById('scan-block').style.display = 'none';
-            document.getElementById('auth-block').style.display = 'flex';
-            document.getElementById('resultat').innerHTML = "";
-            document.getElementById('ticket-file').value = "";
-            
-            currentUserId = null; 
-        });
-
-        document.getElementById('btn-scan').addEventListener('click', async () => {
-            const resDiv = document.getElementById('resultat');
-            const fileInput = document.getElementById('ticket-file');
-            
-            if (fileInput.files.length === 0) {
-                resDiv.style.color = "#e74c3c";
-                resDiv.innerHTML = "<p>⚠️ Veuillez d'abord choisir une photo de ticket.</p>";
-                return;
-            }
-
-            resDiv.style.color = "#3498db";
-            resDiv.innerHTML = "<p>⏳ Analyse et sauvegarde en cours...</p>";
-            
-            const formData = new FormData();
-            formData.append('ticket', fileInput.files[0]);
-            formData.append('googleId', currentUserId); 
-
-            try {
-                const reponse = await fetch('/api/comparer-ticket', { 
-                    method: 'POST',
-                    body: formData 
-                });
-                
-                const data = await reponse.json();
-                
-                if (reponse.ok) {
-                    resDiv.innerHTML = `
-                        <div class="result-card">
-                            <p><strong>🏆 Enseigne gagnante :</strong> ${data.enseigneGagnante}</p>
-                            <p><strong>💶 Total :</strong> ${data.prixTotal} €</p>
-                            <p style="color: #64748b; font-size: 0.85em; font-weight: normal; margin-top: 15px;">
-                                💾 Sauvegardé automatiquement dans votre historique.
-                            </p>
-                        </div>
-                    `;
-                }
-            } catch (err) {
-                resDiv.style.color = "#e74c3c";
-                resDiv.innerHTML = "<p>❌ Erreur de connexion au serveur.</p>";
-            }
-        });
-    </script>
+    document.getElementById('btn-logout').addEventListener('click', () => {
+      window.currentUser = null; 
+      document.getElementById('auth-block').style.display = 'flex';
+      document.getElementById('nav-user-container').style.display = 'none';
+      document.getElementById('btn-save-ticket').style.display = 'none';
+    });
+  </script>
 </body>
 </html>
