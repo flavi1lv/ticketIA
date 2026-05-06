@@ -1,101 +1,101 @@
 require('dotenv').config();
-const express = require('express');
+const express  = require('express');
 const mongoose = require('mongoose');
 const { OAuth2Client } = require('google-auth-library');
-const multer = require('multer');
-const fs = require('fs');
-const { scanTicket } = require('./utils/scanner');
+const multer   = require('multer');
+const fs       = require('fs');
+const path     = require('path');
 
-const app = express();
-const port = 3000;
+const { chromium } = require('playwright-extra');
+const stealth      = require('puppeteer-extra-plugin-stealth')();
+chromium.use(stealth);
+
+const { scanReceipt }   = require('./utils/scanner');
+const { normalizePrice } = require('./utils/helpers');
+
+const app    = express();
+const port   = process.env.PORT || 3000;
 const upload = multer({ dest: 'uploads/' });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CHARGEMENT DYNAMIQUE DES SCRAPERS
+// ─────────────────────────────────────────────────────────────────────────────
+const loadScrapers = () => {
+  const scrapersDir = path.join(__dirname, 'scrapers');
+  const loaded = {};
+  if (fs.existsSync(scrapersDir)) {
+    fs.readdirSync(scrapersDir).forEach(file => {
+      if (file.endsWith('.js')) {
+        loaded[file.replace('.js', '')] = require(path.join(scrapersDir, file));
+      }
+    });
+  }
+  return loaded;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MONGODB
+// ─────────────────────────────────────────────────────────────────────────────
 mongoose.connect(process.env.DATABASE_URL)
-    .then(() => console.log("💾 MongoDB Connected"))
-    .catch(err => console.error("❌ MongoDB Error:", err.message));
+  .then(() => console.log('💾 MongoDB Connected'))
+  .catch(err => console.error('❌ MongoDB Error:', err.message));
 
 const User = mongoose.model('User', new mongoose.Schema({
-    googleId: String,
-    name: String,
-    email: String,
-    history: [{ 
-        date: { type: Date, default: Date.now }, 
-        store: String, 
-        total: Number 
-    }]
+  googleId: String,
+  name:     String,
+  email:    String,
+  history:  [{
+    date:  { type: Date, default: Date.now },
+    store: String,
+    total: Number,
+  }]
 }));
 
+// ─────────────────────────────────────────────────────────────────────────────
+// MIDDLEWARES
+// ─────────────────────────────────────────────────────────────────────────────
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-
 app.use(express.static('public'));
 app.use(express.json());
 
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTH GOOGLE
+// ─────────────────────────────────────────────────────────────────────────────
 app.post('/api/auth/google', async (req, res) => {
-    try {
-        const { token } = req.body;
-        const ticket = await client.verifyIdToken({
-            idToken: token,
-            audience: process.env.GOOGLE_CLIENT_ID,
-        });
-        const payload = ticket.getPayload();
+  try {
+    const { token } = req.body;
+    const ticket = await client.verifyIdToken({
+      idToken:  token,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload();
 
-        let user = await User.findOne({ googleId: payload.sub });
-        if (!user) {
-            user = await User.create({
-                googleId: payload.sub,
-                name: payload.name,
-                email: payload.email
-            });
-        }
-
-        res.json({ name: user.name, googleId: user.googleId });
-    } catch (error) {
-        res.status(401).send("Auth Error");
+    let user = await User.findOne({ googleId: payload.sub });
+    if (!user) {
+      user = await User.create({
+        googleId: payload.sub,
+        name:     payload.name,
+        email:    payload.email,
+      });
     }
+
+    res.json({ name: user.name, googleId: user.googleId });
+  } catch (error) {
+    res.status(401).json({ error: 'Auth Error' });
+  }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPARATEUR TICKET
+// ─────────────────────────────────────────────────────────────────────────────
 app.post('/api/comparer-ticket', upload.single('ticket'), async (req, res) => {
-    if (!req.file) return res.status(400).send("No file uploaded");
+  if (!req.file) return res.status(400).json({ error: 'Aucun fichier reçu' });
 
-    try {
-        const userId = req.body.googleId; 
-        const resultIA = await scanTicket(req.file.path);
+  let browser = null;
 
-        if (fs.existsSync(req.file.path)) {
-            fs.unlinkSync(req.file.path);
-        }
+  try {
+    const userId  = req.body.googleId;
+    const scrapers = loadScrapers();
 
-        if (!resultIA || resultIA.error) {
-            return res.status(500).json({ success: false, message: "AI Scan failed" });
-        }
-
-        if (userId) {
-            await User.findOneAndUpdate(
-                { googleId: userId },
-                { 
-                    $push: { 
-                        history: { 
-                            store: resultIA.enseigne, 
-                            total: resultIA.total 
-                        } 
-                    } 
-                }
-            );
-        }
-
-        res.json({ 
-            success: true,
-            enseigneGagnante: resultIA.enseigne,
-            prixTotal: resultIA.total,
-            articles: resultIA.articles
-        });
-
-    } catch (error) {
-        if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-        res.status(500).send("Server Error");
-    }
-});
-
-app.listen(port, () => {
-    console.log(`🚀 Server: http://localhost:${port}`);
-});
+    // 1. OCR / IA → liste d'articles
+... (99lignes restantes)
